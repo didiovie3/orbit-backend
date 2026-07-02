@@ -1,7 +1,19 @@
+import sys
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.config import check_required_settings
 from app.routers import health
+
+missing = check_required_settings()
+if missing:
+    print(
+        f"\n✗ Missing required .env values: {', '.join(missing)}\n"
+        f"  Copy .env.example to .env and fill these in before starting the server.\n",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 app = FastAPI(title="Orbit API", version="0.1.0")
 
