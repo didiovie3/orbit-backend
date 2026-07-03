@@ -35,13 +35,21 @@ class FakeQuery:
         self.want_single = False
 
     def select(self, *_):
-        self.op = "select"; return self
+        self.op = "select"
+        return self
+
     def insert(self, row):
-        self.op = "insert"; self.payload = row; return self
+        self.op = "insert"
+        self.payload = row
+        return self
+
     def eq(self, f, v):
-        self.filters.append((f, v)); return self
+        self.filters.append((f, v))
+        return self
+
     def maybe_single(self):
-        self.want_single = True; return self
+        self.want_single = True
+        return self
 
     def _matches(self, row):
         return all(str(row.get(f)) == str(v) for f, v in self.filters)
@@ -59,7 +67,8 @@ class FakeQuery:
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                     **payload,
                 }
-                rows.append(new_row); new_rows.append(new_row)
+                rows.append(new_row)
+                new_rows.append(new_row)
             return FakeResult(new_rows)
         matched = [r for r in rows if self._matches(r)]
         return FakeResult(matched[0] if self.want_single else matched)
@@ -178,5 +187,55 @@ joins = [j for j in fake_db.store.get("voice_log_tasks", []) if j["voice_log_id"
 print(f"  Join rows created: {len(joins)} (expect 4)")
 assert len(joins) == 4
 
+# ── Image capture — same pattern as voice, different field names ──
+
+FAKE_IMAGE_EXTRACTION = ExtractionResult(
+    transcript="Whiteboard: Fix payment flow bug -- URGENT. Review PR #42.",
+    hierarchy=[
+        ExtractedTask(label="Fix payment flow bug", base_urgency=5, due_at=None, sub_tasks=[]),
+        ExtractedTask(label="Review PR #42", base_urgency=2, due_at=None, sub_tasks=[]),
+    ],
+)
+
+print("\nTEST 8: POST /v1/capture/image — wrong content type -> 400")
+r = client.post(
+    "/v1/capture/image",
+    files={"image": ("note.gif", io.BytesIO(b"not a real image"), "image/gif")},
+)
+print(f"  Status: {r.status_code} (expect 400)")
+assert r.status_code == 400
+
+print("\nTEST 9: POST /v1/capture/image — happy path, response uses ocr_text (not transcript)")
+with patch("app.routers.capture.extract_hierarchy_from_image", return_value=FAKE_IMAGE_EXTRACTION):
+    r = client.post(
+        "/v1/capture/image",
+        files={"image": ("board.jpg", io.BytesIO(b"fake image bytes"), "image/jpeg")},
+    )
+assert r.status_code == 201, r.text
+image_response = r.json()
+image_log_id = image_response["image_log_id"]
+print(f"  Status: 201, has 'ocr_text' key: {'ocr_text' in image_response}")
+print(f"  Does NOT have 'transcript' key: {'transcript' not in image_response}")
+assert "ocr_text" in image_response
+assert "transcript" not in image_response
+
+print("\nTEST 10: POST /v1/capture/confirm with image_log_id -> source='image', image_log_tasks linked")
+r = client.post("/v1/capture/confirm", json={
+    "image_log_id": image_log_id,
+    "hierarchy": [
+        {"label": "Fix payment flow bug", "base_urgency": 5, "sub_tasks": []},
+        {"label": "Review PR #42", "base_urgency": 2, "sub_tasks": []},
+    ],
+})
+assert r.status_code == 201, r.text
+image_tasks = r.json()
+print(f"  Tasks created: {len(image_tasks)} (expect 2), source: {image_tasks[0]['source']}")
+assert len(image_tasks) == 2
+assert all(t["source"] == "image" for t in image_tasks)
+
+image_joins = [j for j in fake_db.store.get("image_log_tasks", []) if j["image_log_id"] == image_log_id]
+print(f"  image_log_tasks join rows: {len(image_joins)} (expect 2)")
+assert len(image_joins) == 2
+
 print("\n" + "=" * 60)
-print("ALL 7 TESTS PASSED")
+print("ALL 10 TESTS PASSED")

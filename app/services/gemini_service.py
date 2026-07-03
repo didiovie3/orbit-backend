@@ -29,6 +29,36 @@ Current date/time for resolving relative dates like "tomorrow" or
 "Friday": {current_time}
 """
 
+EXTRACTION_PROMPT_IMAGE = """\
+You are extracting a task list from a photo — this could be a whiteboard,
+a handwritten note, a screenshot, or a printed document. The image may
+contain messy handwriting, partial words, or non-task content mixed in
+(dates, doodles, unrelated notes) — extract only the actionable items.
+
+Return:
+1. "transcript" — a faithful transcription of all readable text in the
+   image, in reading order. If handwriting is ambiguous, transcribe your
+   best interpretation rather than omitting it.
+2. "hierarchy" — a list of tasks found in the text. Group related
+   sub-steps under a parent task using "sub_tasks"; only nest one level
+   deep (sub_tasks never have their own sub_tasks). Standalone items with
+   no natural grouping are their own top-level task with an empty
+   sub_tasks list. If nothing in the image reads as an actionable task,
+   return an empty hierarchy list — do not invent tasks that aren't there.
+
+For each task and sub-task, infer:
+- "base_urgency" (1-5): how urgent it appears from context (underlines,
+  exclamation marks, "URGENT" labels, etc. all count as signals).
+  1 = someday/maybe, 3 = normal, 5 = urgent/time-critical. Default to 2
+  if genuinely unclear.
+- "due_at": an ISO8601 timestamp ONLY if a specific date/time is written
+  or clearly implied. Use null if no timing is present — do not guess a
+  date that isn't actually in the image.
+
+Current date/time for resolving relative dates like "tomorrow" or
+"Friday": {current_time}
+"""
+
 
 def get_gemini_client() -> genai.Client:
     settings = get_settings()
@@ -68,4 +98,31 @@ def extract_hierarchy_from_audio(audio_bytes: bytes, mime_type: str) -> Extracti
     # re-validate from response.text ourselves instead — belt and braces.
     # Schema adherence is strong, not guaranteed; this is still input from
     # outside our system, same as any request body.
+    return ExtractionResult.model_validate_json(response.text)
+
+
+def extract_hierarchy_from_image(image_bytes: bytes, mime_type: str) -> ExtractionResult:
+    """
+    Same pattern as extract_hierarchy_from_audio, OCR-flavored prompt
+    instead. Reuses the same ExtractionResult schema — the field is still
+    called .transcript here even though it holds OCR'd text for this
+    path; deliberately not adding a second near-identical Pydantic model
+    just for a field name. The API layer (capture.py) is what actually
+    exposes it as "ocr_text" in the real HTTP response, matching what the
+    contract promises.
+    """
+    client = get_gemini_client()
+
+    prompt = EXTRACTION_PROMPT_IMAGE.format(current_time=datetime.now(timezone.utc).isoformat())
+    image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt, image_part],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=ExtractionResult,
+        ),
+    )
+
     return ExtractionResult.model_validate_json(response.text)

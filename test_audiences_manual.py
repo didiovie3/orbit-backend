@@ -36,21 +36,38 @@ class FakeQuery:
         self.want_single, self.order_field = False, None
 
     def select(self, *_):
-        self.op = "select"; return self
+        self.op = "select"
+        return self
+
     def insert(self, row):
-        self.op = "insert"; self.payload = row; return self
+        self.op = "insert"
+        self.payload = row
+        return self
+
     def update(self, row):
-        self.op = "update"; self.payload = row; return self
+        self.op = "update"
+        self.payload = row
+        return self
+
     def delete(self):
-        self.op = "delete"; return self
+        self.op = "delete"
+        return self
+
     def eq(self, f, v):
-        self.filters.append(("eq", f, v)); return self
+        self.filters.append(("eq", f, v))
+        return self
+
     def is_(self, f, v):
-        self.filters.append(("is", f, v)); return self
+        self.filters.append(("is", f, v))
+        return self
+
     def order(self, f, desc=False):
-        self.order_field = f; return self
+        self.order_field = f
+        return self
+
     def maybe_single(self):
-        self.want_single = True; return self
+        self.want_single = True
+        return self
 
     def _matches(self, row):
         for kind, field, value in self.filters:
@@ -72,7 +89,8 @@ class FakeQuery:
             return FakeResult([new_row])
         if self.op == "update":
             matched = [r for r in rows if self._matches(r)]
-            for r in matched: r.update(self.payload)
+            for r in matched:
+                r.update(self.payload)
             return FakeResult(matched)
         if self.op == "delete":
             matched = [r for r in rows if self._matches(r)]

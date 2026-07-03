@@ -40,6 +40,19 @@ class CaptureVoiceResponse(BaseModel):
     voice_log_id: UUID
 
 
+class CaptureImageResponse(BaseModel):
+    """
+    Same idea as CaptureVoiceResponse, but the contract names this field
+    ocr_text instead of transcript, and voice_log_id becomes image_log_id.
+    Genuinely just a naming difference — the underlying Gemini call and
+    extraction shape are identical.
+    """
+
+    ocr_text: str
+    hierarchy: list[ExtractedTask]
+    image_log_id: UUID
+
+
 class ConfirmHierarchyItem(BaseModel):
     """
     Same shape as ExtractedTask, but this is what the ANDROID APP sends

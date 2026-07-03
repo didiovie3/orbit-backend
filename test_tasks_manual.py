@@ -14,8 +14,6 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
-import jwt
-
 sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient  # noqa: E402

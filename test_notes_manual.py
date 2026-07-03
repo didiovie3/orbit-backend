@@ -5,7 +5,7 @@ This one adds .lt() (less-than filter, for the pagination cursor) and
 import os
 import sys
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 sys.path.insert(0, ".")
 os.environ["SUPABASE_URL"] = "https://fake.supabase.co"
@@ -31,25 +31,46 @@ class FakeQuery:
         self.limit_n = None
 
     def select(self, *_):
-        self.op = "select"; return self
+        self.op = "select"
+        return self
+
     def insert(self, row):
-        self.op = "insert"; self.payload = row; return self
+        self.op = "insert"
+        self.payload = row
+        return self
+
     def update(self, row):
-        self.op = "update"; self.payload = row; return self
+        self.op = "update"
+        self.payload = row
+        return self
+
     def delete(self):
-        self.op = "delete"; return self
+        self.op = "delete"
+        return self
+
     def eq(self, f, v):
-        self.filters.append(("eq", f, v)); return self
+        self.filters.append(("eq", f, v))
+        return self
+
     def is_(self, f, v):
-        self.filters.append(("is", f, v)); return self
+        self.filters.append(("is", f, v))
+        return self
+
     def lt(self, f, v):
-        self.filters.append(("lt", f, v)); return self
+        self.filters.append(("lt", f, v))
+        return self
+
     def order(self, f, desc=False):
-        self.order_field, self.order_desc = f, desc; return self
+        self.order_field, self.order_desc = f, desc
+        return self
+
     def limit(self, n):
-        self.limit_n = n; return self
+        self.limit_n = n
+        return self
+
     def maybe_single(self):
-        self.want_single = True; return self
+        self.want_single = True
+        return self
 
     def _matches(self, row):
         for kind, field, value in self.filters:
@@ -74,11 +95,13 @@ class FakeQuery:
                     "archived_at": None,
                     **payload,
                 }
-                rows.append(new_row); new_rows.append(new_row)
+                rows.append(new_row)
+                new_rows.append(new_row)
             return FakeResult(new_rows)
         if self.op == "update":
             matched = [r for r in rows if self._matches(r)]
-            for r in matched: r.update(self.payload)
+            for r in matched:
+                r.update(self.payload)
             return FakeResult(matched)
         if self.op == "delete":
             matched = [r for r in rows if self._matches(r)]

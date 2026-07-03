@@ -3,15 +3,18 @@ from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
 from app.db.supabase_client import get_supabase
-from app.models.capture import CaptureVoiceResponse, ConfirmCaptureRequest
+from app.models.capture import CaptureImageResponse, CaptureVoiceResponse, ConfirmCaptureRequest
 from app.models.task import TaskResponse
-from app.services.gemini_service import extract_hierarchy_from_audio
+from app.services.gemini_service import extract_hierarchy_from_audio, extract_hierarchy_from_image
 from app.services.task_creation import save_hierarchy_as_tasks
 
 router = APIRouter(prefix="/capture", tags=["capture"])
 
 ALLOWED_AUDIO_TYPES = {"audio/mp4", "audio/m4a", "audio/x-m4a", "audio/mpeg", "audio/mp3"}
 MAX_AUDIO_BYTES = 25 * 1024 * 1024  # 25MB — generous for a voice memo under 60s
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png"}
+MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 15MB — a phone photo of a whiteboard fits comfortably
 
 
 @router.post("/voice", response_model=CaptureVoiceResponse, status_code=status.HTTP_201_CREATED)
@@ -67,6 +70,54 @@ async def capture_voice(
         "transcript": result.transcript,
         "hierarchy": result.hierarchy,
         "voice_log_id": voice_log["id"],
+    }
+
+
+@router.post("/image", response_model=CaptureImageResponse, status_code=status.HTTP_201_CREATED)
+async def capture_image(
+    image: UploadFile = File(...),
+    project_id: str | None = Form(default=None),
+    audience_id: str | None = Form(default=None),
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    if image.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported image type '{image.content_type}'. Expected .jpg or .png.",
+        )
+
+    image_bytes = await image.read()
+    if len(image_bytes) > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image file too large (max 15MB).",
+        )
+    if len(image_bytes) == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty image file.")
+
+    try:
+        result = extract_hierarchy_from_image(image_bytes, image.content_type)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI extraction failed: {exc}",
+        ) from exc
+
+    # Same "not built yet" placeholder as voice_ref — Supabase Storage
+    # upload isn't wired up. OCR and extraction work fully without it.
+    image_log_row = {
+        "user_id": current_user.user_id,
+        "image_ref": f"pending-storage:{image.filename}",
+        "ocr_text": result.transcript,  # ExtractionResult's field is still named .transcript internally — see gemini_service.py's docstring on extract_hierarchy_from_image for why
+    }
+    log_result = supabase.table("image_logs").insert(image_log_row).execute()
+    image_log = log_result.data[0]
+
+    return {
+        "ocr_text": result.transcript,
+        "hierarchy": result.hierarchy,
+        "image_log_id": image_log["id"],
     }
 
 
