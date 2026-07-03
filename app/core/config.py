@@ -8,6 +8,10 @@ class Settings(BaseSettings):
 
     env: str = "dev"
 
+    # Sentry — optional. Leave blank locally if you don't want every dev-time
+    # exception showing up in the dashboard; set it in staging/prod.
+    sentry_dsn: str = ""
+
     # Supabase — required, checked explicitly at startup (see check_required_settings)
     supabase_url: str = ""
     supabase_service_key: str = ""

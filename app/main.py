@@ -1,9 +1,10 @@
 import sys
 
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.config import check_required_settings
+from app.core.config import check_required_settings, get_settings
 from app.routers import health
 
 missing = check_required_settings()
@@ -14,6 +15,25 @@ if missing:
         file=sys.stderr,
     )
     sys.exit(1)
+
+settings = get_settings()
+
+# Only turns on if SENTRY_DSN is actually set — blank locally is fine and
+# just means nothing gets sent anywhere. sentry_sdk.init() has to run
+# before the FastAPI app is created so it can hook into everything from
+# the start, including things that happen during startup itself.
+if settings.sentry_dsn:
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        environment=settings.env,
+        # Fraction of requests to trace for performance monitoring, not
+        # just errors. 1.0 = 100% is fine at this scale; dial down once
+        # there's real traffic, since it costs Sentry-side quota.
+        traces_sample_rate=1.0,
+    )
+    print(f"✓ Sentry initialized (environment: {settings.env})")
+else:
+    print("○ Sentry not configured — SENTRY_DSN is blank, errors won't be reported")
 
 app = FastAPI(title="Orbit API", version="0.1.0")
 
@@ -36,3 +56,14 @@ app.include_router(health.router, prefix="/v1")
 @app.get("/")
 def root():
     return {"service": "orbit-api", "status": "running"}
+
+
+@app.get("/debug-sentry")
+def debug_sentry():
+    """
+    Deliberately broken on purpose — hit this once after setting a real
+    SENTRY_DSN to confirm errors actually show up in your Sentry
+    dashboard. Delete this route once you've verified it, or leave it —
+    either is fine, but it shouldn't ship to a real production build.
+    """
+    return 1 / 0
