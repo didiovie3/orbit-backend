@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import check_required_settings, get_settings
-from app.routers import health
+from app.routers import audiences, capture, health, notes, projects, tasks
 
 missing = check_required_settings()
 if missing:
@@ -51,6 +51,11 @@ app.add_middleware(
 # As you build out Step 5, each new router (tasks, projects, notes, ...)
 # gets its own file in app/routers/ and gets included here the same way.
 app.include_router(health.router, prefix="/v1")
+app.include_router(tasks.router, prefix="/v1")
+app.include_router(projects.router, prefix="/v1")
+app.include_router(notes.router, prefix="/v1")
+app.include_router(audiences.router, prefix="/v1")
+app.include_router(capture.router, prefix="/v1")
 
 
 @app.get("/")
