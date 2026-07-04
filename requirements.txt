@@ -3,9 +3,10 @@ uvicorn[standard]==0.32.0
 supabase==2.31.0
 pydantic-settings==2.6.1
 PyJWT[crypto]==2.13.0
-apscheduler==3.10.4
+apscheduler==3.11.3
 python-dotenv==1.0.1
 httpx==0.28.1
 sentry-sdk[fastapi]==2.19.2
 google-genai==2.10.0
 python-multipart==0.0.20
+firebase-admin==7.5.0

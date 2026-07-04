@@ -60,6 +60,55 @@ Current date/time for resolving relative dates like "tomorrow" or
 """
 
 
+STATUS_UPDATE_PROMPT = """\
+Write a short status update summarizing the following completed and
+in-progress tasks, for an audience called "{audience_name}".
+
+{tone_instruction}
+
+Tasks to summarize:
+{task_list}
+
+Write it as a short, natural paragraph (or a couple of short paragraphs
+for a longer list) — not a bulleted list, not a formal report. This is a
+draft the person will review and edit before sending, so it should read
+like something a person would actually write, not a corporate summary.
+Do not invent details that aren't in the task list above.
+"""
+
+
+def generate_status_update_draft(
+    task_labels: list[str],
+    audience_name: str,
+    tone_notes: str | None,
+) -> str:
+    """
+    Plain text in, plain text out — simpler than the voice/image
+    extraction functions above, since there's no audio/image input and
+    no structured schema to enforce. Just one string.
+    """
+    client = get_gemini_client()
+
+    tone_instruction = (
+        f"Tone for this audience: {tone_notes}"
+        if tone_notes
+        else "No specific tone guidance given — write in a clear, friendly, professional default tone."
+    )
+    task_list = "\n".join(f"- {label}" for label in task_labels)
+
+    prompt = STATUS_UPDATE_PROMPT.format(
+        audience_name=audience_name,
+        tone_instruction=tone_instruction,
+        task_list=task_list,
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt],
+    )
+    return response.text.strip()
+
+
 def get_gemini_client() -> genai.Client:
     settings = get_settings()
     if not settings.gemini_api_key:

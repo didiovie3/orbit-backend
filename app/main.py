@@ -1,11 +1,13 @@
 import sys
+from contextlib import asynccontextmanager
 
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import check_required_settings, get_settings
-from app.routers import audiences, capture, health, notes, projects, tasks
+from app.core.scheduler import start_scheduler, stop_scheduler
+from app.routers import audiences, calendar, capture, health, notes, projects, status_updates, tasks
 
 missing = check_required_settings()
 if missing:
@@ -35,7 +37,17 @@ if settings.sentry_dsn:
 else:
     print("○ Sentry not configured — SENTRY_DSN is blank, errors won't be reported")
 
-app = FastAPI(title="Orbit API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Runs once when the server starts, before it accepts any requests.
+    start_scheduler()
+    yield
+    # Runs once when the server shuts down (Ctrl+C) — lets any in-flight
+    # job finish cleanly instead of getting killed mid-update.
+    stop_scheduler()
+
+
+app = FastAPI(title="Orbit API", version="0.1.0", lifespan=lifespan)
 
 # Dev-permissive CORS. Tighten this before shipping — the Android app talks
 # over Retrofit (not a browser), so CORS mainly matters if/when you ever
@@ -56,6 +68,8 @@ app.include_router(projects.router, prefix="/v1")
 app.include_router(notes.router, prefix="/v1")
 app.include_router(audiences.router, prefix="/v1")
 app.include_router(capture.router, prefix="/v1")
+app.include_router(status_updates.router, prefix="/v1")
+app.include_router(calendar.router, prefix="/v1")
 
 
 @app.get("/")
@@ -72,3 +86,33 @@ def debug_sentry():
     either is fine, but it shouldn't ship to a real production build.
     """
     return 1 / 0
+
+
+@app.post("/debug/run-escalation")
+def debug_run_escalation():
+    """Manually triggers the escalation job instead of waiting up to an
+    hour for it to fire on its own schedule. Dev/debug tool, not part of
+    the API contract — same spirit as /debug-sentry."""
+    from app.db.supabase_client import get_supabase
+    from app.services.escalation import run_escalation_job
+
+    return run_escalation_job(get_supabase())
+
+
+@app.post("/debug/run-overdue-flip")
+def debug_run_overdue_flip():
+    """Manually triggers the overdue-flip job."""
+    from app.db.supabase_client import get_supabase
+    from app.services.escalation import run_overdue_flip_job
+
+    return run_overdue_flip_job(get_supabase())
+
+
+@app.post("/debug/fire-reminders")
+def debug_fire_reminders():
+    """Manually triggers the reminder-firing job instead of waiting up to
+    a minute for it to fire on its own schedule."""
+    from app.db.supabase_client import get_supabase
+    from app.services.reminders import run_fire_reminders_job
+
+    return run_fire_reminders_job(get_supabase())
