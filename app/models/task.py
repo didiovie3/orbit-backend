@@ -25,6 +25,7 @@ class TaskCreate(BaseModel):
     due_at: Optional[datetime] = None
     escalation_enabled: bool = True
     source: str = Field(default="typed")
+    map_angle: Optional[float] = None
 
     @field_validator("source")
     @classmethod
@@ -49,6 +50,7 @@ class TaskUpdate(BaseModel):
     escalation_enabled: Optional[bool] = None
     status: Optional[str] = None
     due_at: Optional[datetime] = None
+    map_angle: Optional[float] = None
 
     @field_validator("status")
     @classmethod
@@ -78,6 +80,7 @@ class TaskResponse(BaseModel):
     archived_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    map_angle: Optional[float] = None
 
 
 class TaskListResponse(BaseModel):

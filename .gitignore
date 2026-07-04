@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 .env
 .env.*
-!.env.example
+.env.example
 firebase-service-account.json
 .DS_Store
 .pytest_cache/

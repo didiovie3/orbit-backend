@@ -78,6 +78,7 @@ def create_task(
         "escalation_enabled": body.escalation_enabled,
         "due_at": body.due_at.isoformat() if body.due_at else None,
         "source": body.source,
+        "map_angle": body.map_angle,
     }
     result = supabase.table("tasks").insert(row).execute()
     task = result.data[0]
