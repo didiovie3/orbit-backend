@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import check_required_settings, get_settings
 from app.core.scheduler import start_scheduler, stop_scheduler
-from app.routers import audiences, calendar, capture, health, notes, projects, status_updates, tasks
+from app.routers import audiences, calendar, capture, health, notes, projects, status_updates, tasks, users
 
 missing = check_required_settings()
 if missing:
@@ -70,6 +70,7 @@ app.include_router(audiences.router, prefix="/v1")
 app.include_router(capture.router, prefix="/v1")
 app.include_router(status_updates.router, prefix="/v1")
 app.include_router(calendar.router, prefix="/v1")
+app.include_router(users.router, prefix="/v1")
 
 
 @app.get("/")
