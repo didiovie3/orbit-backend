@@ -25,7 +25,6 @@ class TaskCreate(BaseModel):
     due_at: Optional[datetime] = None
     escalation_enabled: bool = True
     source: str = Field(default="typed")
-    map_angle: Optional[float] = None
 
     @field_validator("source")
     @classmethod
@@ -50,7 +49,7 @@ class TaskUpdate(BaseModel):
     escalation_enabled: Optional[bool] = None
     status: Optional[str] = None
     due_at: Optional[datetime] = None
-    map_angle: Optional[float] = None
+    location: Optional[str] = None
 
     @field_validator("status")
     @classmethod
@@ -80,8 +79,21 @@ class TaskResponse(BaseModel):
     archived_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-    map_angle: Optional[float] = None
 
 
 class TaskListResponse(BaseModel):
     tasks: list[TaskResponse]
+
+
+class SetRemindersRequest(BaseModel):
+    remind_at_list: list[datetime]
+
+
+class ReminderResponse(BaseModel):
+    id: UUID
+    task_id: UUID
+    remind_at: datetime
+
+
+class RemindersListResponse(BaseModel):
+    reminders: list[ReminderResponse]

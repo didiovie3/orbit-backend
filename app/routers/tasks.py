@@ -12,6 +12,8 @@ from app.models.task import (
     TaskListResponse,
     TaskResponse,
     TaskUpdate,
+    SetRemindersRequest,
+    RemindersListResponse,
 )
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -78,7 +80,6 @@ def create_task(
         "escalation_enabled": body.escalation_enabled,
         "due_at": body.due_at.isoformat() if body.due_at else None,
         "source": body.source,
-        "map_angle": body.map_angle,
     }
     result = supabase.table("tasks").insert(row).execute()
     task = result.data[0]
@@ -106,6 +107,42 @@ def get_task(
     supabase: Client = Depends(get_supabase),
 ):
     return _get_owned_task(supabase, task_id, current_user.user_id)
+
+
+@router.get("/{task_id}/reminders", response_model=RemindersListResponse)
+def get_task_reminders(
+    task_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    _get_owned_task(supabase, task_id, current_user.user_id)
+    result = (
+        supabase.table("task_reminder_preferences")
+        .select("*")
+        .eq("task_id", str(task_id))
+        .execute()
+    )
+    return {"reminders": result.data}
+
+
+@router.post("/{task_id}/reminders", response_model=RemindersListResponse)
+def set_task_reminders(
+    task_id: UUID,
+    body: SetRemindersRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    _get_owned_task(supabase, task_id, current_user.user_id)
+    
+    # Delete old reminders
+    supabase.table("task_reminder_preferences").delete().eq("task_id", str(task_id)).execute()
+    
+    # Insert new reminders
+    if body.remind_at_list:
+        rows = [{"task_id": str(task_id), "remind_at": dt.isoformat()} for dt in body.remind_at_list]
+        result = supabase.table("task_reminder_preferences").insert(rows).execute()
+        return {"reminders": result.data}
+    return {"reminders": []}
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)
