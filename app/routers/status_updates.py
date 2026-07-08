@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
@@ -9,6 +9,7 @@ from app.db.supabase_client import get_supabase
 from app.models.status_update import (
     GenerateStatusUpdateRequest,
     SendStatusUpdateRequest,
+    StatusUpdateListResponse,
     StatusUpdateResponse,
 )
 from app.services.gemini_service import generate_status_update_draft
@@ -24,6 +25,25 @@ def _task_ids_for(supabase: Client, status_update_id: str) -> list[str]:
         .execute()
     )
     return [row["task_id"] for row in result.data]
+
+
+@router.get("", response_model=StatusUpdateListResponse)
+def list_status_updates(
+    audience_id: UUID | None = Query(default=None),
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    query = (
+        supabase.table("status_updates")
+        .select("*")
+        .eq("user_id", current_user.user_id)
+    )
+    if audience_id is not None:
+        query = query.eq("audience_id", str(audience_id))
+
+    result = query.order("created_at", desc=True).execute()
+    updates = [{**row, "task_ids": _task_ids_for(supabase, row["id"])} for row in result.data]
+    return {"status_updates": updates}
 
 
 @router.post("/generate", response_model=StatusUpdateResponse, status_code=status.HTTP_201_CREATED)

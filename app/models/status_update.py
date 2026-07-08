@@ -22,3 +22,7 @@ class StatusUpdateResponse(BaseModel):
     drive_file_id: Optional[str] = None
     task_ids: list[UUID]
     created_at: datetime
+
+
+class StatusUpdateListResponse(BaseModel):
+    status_updates: list[StatusUpdateResponse]
