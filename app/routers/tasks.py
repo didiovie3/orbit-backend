@@ -15,8 +15,10 @@ from app.models.task import (
     TaskUpdate,
     SetRemindersRequest,
     RemindersListResponse,
+    SubtaskReorderRequest,
 )
 from app.services.drive_service import get_access_token, upload_file
+from app.services.projects import get_unsorted_project_id
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -48,6 +50,7 @@ def _get_owned_task(supabase: Client, task_id: UUID, user_id: str) -> dict:
 @router.get("", response_model=TaskListResponse)
 def list_tasks(
     project_id: UUID | None = Query(default=None),
+    parent_task_id: UUID | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
     include_archived: bool = Query(default=False),
     current_user: CurrentUser = Depends(get_current_user),
@@ -57,12 +60,19 @@ def list_tasks(
 
     if project_id is not None:
         query = query.eq("project_id", str(project_id))
+    if parent_task_id is not None:
+        query = query.eq("parent_task_id", str(parent_task_id))
     if status_filter is not None:
         query = query.eq("status", status_filter)
     if not include_archived:
         query = query.is_("archived_at", "null")
 
-    result = query.order("urgency", desc=True).execute()
+    # Sub-tasks have a deliberate manual order (drag-reordered in the app);
+    # top-level tasks don't, so they keep sorting by urgency as always.
+    if parent_task_id is not None:
+        result = query.order("sort_index").execute()
+    else:
+        result = query.order("urgency", desc=True).execute()
     return {"tasks": result.data}
 
 
@@ -72,9 +82,28 @@ def create_task(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
+    # "No project" means the real Unsorted project, never a null FK — see
+    # app/services/projects.py. Sub-tasks inherit sort_index scoping by
+    # parent_task_id regardless, so this only affects project_id itself.
+    project_id = str(body.project_id) if body.project_id else get_unsorted_project_id(supabase, current_user.user_id)
+
+    sort_index = 0
+    if body.parent_task_id:
+        # Append after existing siblings — new sub-tasks land at the end of
+        # the list rather than colliding with (or jumping ahead of) whatever
+        # order's already been drag-reordered.
+        siblings = (
+            supabase.table("tasks")
+            .select("id", count="exact")
+            .eq("parent_task_id", str(body.parent_task_id))
+            .eq("user_id", current_user.user_id)
+            .execute()
+        )
+        sort_index = siblings.count or 0
+
     row = {
         "user_id": current_user.user_id,
-        "project_id": str(body.project_id) if body.project_id else None,
+        "project_id": project_id,
         "parent_task_id": str(body.parent_task_id) if body.parent_task_id else None,
         "audience_id": str(body.audience_id) if body.audience_id else None,
         "label": body.label,
@@ -84,6 +113,7 @@ def create_task(
         "escalation_enabled": body.escalation_enabled,
         "due_at": body.due_at.isoformat() if body.due_at else None,
         "source": body.source,
+        "sort_index": sort_index,
     }
     result = supabase.table("tasks").insert(row).execute()
     task = result.data[0]
@@ -253,6 +283,11 @@ def update_task(
     updates = body.model_dump(exclude_unset=True, exclude_none=False)
     if "due_at" in updates and updates["due_at"] is not None:
         updates["due_at"] = body.due_at.isoformat()
+    # An explicit {"project_id": null} means "unassign", which maps to the
+    # real Unsorted project rather than a null FK — same invariant as
+    # create_task (see app/services/projects.py).
+    if "project_id" in updates and updates["project_id"] is None:
+        updates["project_id"] = get_unsorted_project_id(supabase, current_user.user_id)
     for uuid_field in ("project_id", "parent_task_id", "audience_id"):
         if uuid_field in updates and updates[uuid_field] is not None:
             updates[uuid_field] = str(updates[uuid_field])
@@ -268,6 +303,32 @@ def update_task(
         .execute()
     )
     return result.data[0]
+
+
+@router.patch("/{task_id}/subtasks/reorder", status_code=status.HTTP_204_NO_CONTENT)
+def reorder_subtasks(
+    task_id: UUID,
+    body: SubtaskReorderRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    _get_owned_task(supabase, task_id, current_user.user_id)  # 404s if parent isn't owned
+
+    for idx, sub_id in enumerate(body.task_ids):
+        result = (
+            supabase.table("tasks")
+            .update({"sort_index": idx})
+            .eq("id", str(sub_id))
+            .eq("user_id", current_user.user_id)
+            .eq("parent_task_id", str(task_id))
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Sub-task {sub_id} not found under this parent",
+            )
+    return None
 
 
 @router.patch("/{task_id}/archive", response_model=TaskResponse)

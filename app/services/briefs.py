@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from supabase import Client
 
 from app.services.gemini_service import generate_eod_reflection
+from app.services.streak import compute_streak
 
 
 def _today_bounds() -> tuple[str, str]:
@@ -42,22 +43,6 @@ def _done_today(supabase: Client, user_id: str) -> list[dict]:
         .execute()
     )
     return result.data
-
-
-def compute_current_streak(supabase: Client, user_id: str) -> int:
-    """Consecutive days up to and including today with at least one task
-    touched. Deliberately simpler than the Android client's on-device
-    heuristic (which tolerates short gaps) — this is a separate, honest
-    server-side approximation, not guaranteed to match the number shown
-    in the app exactly."""
-    result = supabase.table("tasks").select("updated_at").eq("user_id", user_id).execute()
-    active_days = {row["updated_at"][:10] for row in result.data}
-    streak = 0
-    cursor = datetime.now(timezone.utc).date()
-    while cursor.isoformat() in active_days:
-        streak += 1
-        cursor -= timedelta(days=1)
-    return streak
 
 
 def generate_morning_brief_content(supabase: Client, user_id: str) -> str:
@@ -113,7 +98,7 @@ def generate_progress_brief_content(supabase: Client, user_id: str) -> str:
 def generate_eod_brief_content(supabase: Client, user_id: str) -> str:
     done_today = _done_today(supabase, user_id)
     carried_forward = _open_tasks(supabase, user_id, ["today", "overdue"])
-    streak = compute_current_streak(supabase, user_id)
+    streak, _ = compute_streak(supabase, user_id)
 
     stats = (
         f"{len(done_today)} completed today, {len(carried_forward)} carried forward to tomorrow. "

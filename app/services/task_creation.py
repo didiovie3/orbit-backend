@@ -4,6 +4,7 @@ from typing import Optional
 from supabase import Client
 
 from app.models.capture import ConfirmHierarchyItem
+from app.services.projects import get_unsorted_project_id
 
 
 def _create_default_reminders(supabase: Client, task_id: str, due_at) -> None:
@@ -43,11 +44,14 @@ def save_hierarchy_as_tasks(
     together, matching what POST /v1/capture/confirm's contract promises.
     """
     created_tasks: list[dict] = []
+    # "No project" means the real Unsorted project, never a null FK — same
+    # invariant as tasks.py's create_task (see app/services/projects.py).
+    resolved_project_id = project_id or get_unsorted_project_id(supabase, user_id)
 
     for parent in hierarchy:
         parent_row = {
             "user_id": user_id,
-            "project_id": project_id,
+            "project_id": resolved_project_id,
             "audience_id": audience_id,
             "location": location,
             "label": parent.label,
@@ -62,10 +66,10 @@ def save_hierarchy_as_tasks(
         created_tasks.append(parent_task)
         _create_default_reminders(supabase, parent_task["id"], parent.due_at)
 
-        for sub in parent.sub_tasks:
+        for idx, sub in enumerate(parent.sub_tasks):
             sub_row = {
                 "user_id": user_id,
-                "project_id": project_id,
+                "project_id": resolved_project_id,
                 "audience_id": audience_id,
                 "parent_task_id": parent_task["id"],
                 "location": location,
@@ -75,6 +79,9 @@ def save_hierarchy_as_tasks(
                 "escalation_enabled": True,
                 "due_at": sub.due_at.isoformat() if sub.due_at else None,
                 "source": source,
+                # Preserves Gemini's extraction order (which itself mirrors
+                # reading/speaking order) instead of leaving it to accident.
+                "sort_index": idx,
             }
             sub_result = supabase.table("tasks").insert(sub_row).execute()
             sub_task = sub_result.data[0]

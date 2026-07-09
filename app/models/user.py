@@ -19,6 +19,12 @@ class UserResponse(BaseModel):
     # Same derivation pattern as calendar_connected, for Drive's independent
     # connect flow (app/routers/drive.py).
     drive_connected: bool
+    # Derived from task activity (app/services/streak.py) — not a stored
+    # column, so the number shown here always matches what the EOD brief
+    # text says, instead of the app and the brief drifting independently.
+    current_streak: int
+    streak_active_today: bool
+    onboarding_completed: bool
     created_at: str
 
 
@@ -34,3 +40,7 @@ class UserUpdate(BaseModel):
     # Lets the Android app register/refresh its push token here, rather
     # than needing a separate endpoint just for this one field.
     fcm_token: Optional[str] = None
+    # Set once, from the last step of OnboardingScreen — server-side so it
+    # survives reinstalls and multi-device logins instead of living only in
+    # SharedPreferences.
+    onboarding_completed: Optional[bool] = None

@@ -96,7 +96,12 @@ def archive_project(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
-    _get_owned_project(supabase, project_id, current_user.user_id)
+    project = _get_owned_project(supabase, project_id, current_user.user_id)
+    if project["is_unsorted"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The Unsorted project can't be archived",
+        )
     now = datetime.now(timezone.utc).isoformat()
 
     # Cascade: archive every currently-active task under this project too.
@@ -152,7 +157,12 @@ def delete_project(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="confirmed must be true to permanently delete a project",
         )
-    _get_owned_project(supabase, project_id, current_user.user_id)
+    project = _get_owned_project(supabase, project_id, current_user.user_id)
+    if project["is_unsorted"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The Unsorted project can't be deleted",
+        )
 
     # Explicit cascade, not a DB-level one — see the note above this file's
     # import block. Deleting each task this way still lets THEIR own

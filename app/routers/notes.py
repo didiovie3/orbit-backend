@@ -14,6 +14,7 @@ from app.models.note import (
     NoteUpdate,
 )
 from app.services.gemini_service import generate_note_summary
+from app.services.projects import get_unsorted_project_id
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -60,9 +61,13 @@ def create_note(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
+    # "No project" means the real Unsorted project, never a null FK — same
+    # invariant as tasks.py's create_task (see app/services/projects.py).
+    project_id = str(body.project_id) if body.project_id else get_unsorted_project_id(supabase, current_user.user_id)
+
     row = {
         "user_id": current_user.user_id,
-        "project_id": str(body.project_id) if body.project_id else None,
+        "project_id": project_id,
         "title": body.title,
         "content": body.content,
         # summary and drive_file_id both start null. summary gets filled
@@ -97,8 +102,13 @@ def update_note(
     _get_owned_note(supabase, note_id, current_user.user_id)
 
     updates = body.model_dump(exclude_unset=True)
-    if "project_id" in updates and updates["project_id"] is not None:
-        updates["project_id"] = str(updates["project_id"])
+    if "project_id" in updates:
+        if updates["project_id"] is None:
+            # Explicit unassign maps to the real Unsorted project, not a
+            # null FK — same invariant as create_note.
+            updates["project_id"] = get_unsorted_project_id(supabase, current_user.user_id)
+        else:
+            updates["project_id"] = str(updates["project_id"])
     if not updates:
         return _get_owned_note(supabase, note_id, current_user.user_id)
 

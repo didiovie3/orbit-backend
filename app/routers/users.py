@@ -4,15 +4,19 @@ from supabase import Client
 from app.core.auth import CurrentUser, get_current_user
 from app.db.supabase_client import get_supabase
 from app.models.user import UserResponse, UserUpdate
+from app.services.streak import compute_streak
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-def _to_response(row: dict) -> dict:
+def _to_response(row: dict, supabase: Client) -> dict:
+    streak, streak_active_today = compute_streak(supabase, row["id"])
     return {
         **row,
         "calendar_connected": row.get("google_calendar_token") is not None,
         "drive_connected": row.get("google_drive_token") is not None,
+        "current_streak": streak,
+        "streak_active_today": streak_active_today,
     }
 
 
@@ -26,7 +30,7 @@ def get_me(
     )
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return _to_response(result.data)
+    return _to_response(result.data, supabase)
 
 
 @router.patch("/me", response_model=UserResponse)
@@ -42,4 +46,4 @@ def update_me(
     result = (
         supabase.table("users").select("*").eq("id", current_user.user_id).maybe_single().execute()
     )
-    return _to_response(result.data)
+    return _to_response(result.data, supabase)

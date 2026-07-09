@@ -76,6 +76,11 @@ class TaskResponse(BaseModel):
     source: str
     due_at: Optional[datetime] = None
     calendar_event_id: Optional[str] = None
+    # Position among siblings sharing the same parent_task_id — only
+    # meaningful for sub-tasks. Assigned server-side (append-on-create,
+    # rewritten wholesale by PATCH /tasks/:id/subtasks/reorder), never
+    # taken directly from the client.
+    sort_index: int
     archived_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -83,6 +88,14 @@ class TaskResponse(BaseModel):
 
 class TaskListResponse(BaseModel):
     tasks: list[TaskResponse]
+
+
+class SubtaskReorderRequest(BaseModel):
+    """Ordered list of sub-task ids — position in this list becomes each
+    one's new sort_index. All ids must already be sub-tasks of the parent
+    in the URL and owned by the caller."""
+
+    task_ids: list[UUID]
 
 
 class SetRemindersRequest(BaseModel):
