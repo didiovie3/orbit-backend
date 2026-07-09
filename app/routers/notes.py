@@ -13,6 +13,7 @@ from app.models.note import (
     NoteResponse,
     NoteUpdate,
 )
+from app.services.gemini_service import generate_note_summary
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -65,12 +66,11 @@ def create_note(
         "title": body.title,
         "content": body.content,
         # summary and drive_file_id both start null. summary gets filled
-        # in by POST /v1/notes/:id/summarise once the Gemini pipeline
-        # exists. drive_file_id gets filled in once Drive integration
-        # exists — per the contract this normally happens async within
-        # ~30 seconds of creation, but that background job isn't built
-        # yet either, so it just stays null for now. Neither blocks the
-        # note itself from working.
+        # in by POST /v1/notes/:id/summarise. drive_file_id gets filled in
+        # once Drive integration exists — per the contract this normally
+        # happens async within ~30 seconds of creation, but that
+        # background job isn't built yet, so it just stays null for now.
+        # Neither blocks the note itself from working.
         "summary": None,
         "drive_file_id": None,
     }
@@ -123,6 +123,38 @@ def archive_note(
     result = (
         supabase.table("notes")
         .update({"archived_at": now})
+        .eq("id", str(note_id))
+        .eq("user_id", current_user.user_id)
+        .execute()
+    )
+    return result.data[0]
+
+
+@router.post("/{note_id}/summarise", response_model=NoteResponse)
+def summarise_note(
+    note_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    note = _get_owned_note(supabase, note_id, current_user.user_id)
+
+    if not note["content"].strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Note has no content to summarise",
+        )
+
+    try:
+        summary = generate_note_summary(note["content"])
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Summary generation failed: {exc}",
+        ) from exc
+
+    result = (
+        supabase.table("notes")
+        .update({"summary": summary})
         .eq("id", str(note_id))
         .eq("user_id", current_user.user_id)
         .execute()

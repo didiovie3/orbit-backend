@@ -142,6 +142,30 @@ def generate_eod_reflection(done_labels: list[str], carried_count: int, streak: 
     return response.text.strip()
 
 
+NOTE_SUMMARY_PROMPT = """\
+Summarize the following note in 1-2 short sentences — just enough for
+someone to recall what it's about without rereading the whole thing.
+
+Note:
+{content}
+
+Write only the summary itself — no preamble, no "This note is about...".
+"""
+
+
+def generate_note_summary(content: str) -> str:
+    """Same plain-text-in, plain-text-out shape as generate_status_update_draft."""
+    client = get_gemini_client()
+
+    prompt = NOTE_SUMMARY_PROMPT.format(content=content)
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt],
+    )
+    return response.text.strip()
+
+
 def get_gemini_client() -> genai.Client:
     settings = get_settings()
     if not settings.gemini_api_key:
