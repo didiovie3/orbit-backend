@@ -12,6 +12,7 @@ def _to_response(row: dict) -> dict:
     return {
         **row,
         "calendar_connected": row.get("google_calendar_token") is not None,
+        "drive_connected": row.get("google_drive_token") is not None,
     }
 
 

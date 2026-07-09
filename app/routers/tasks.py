@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
 from app.db.supabase_client import get_supabase
+from app.models.attachment import AttachmentListResponse, AttachmentResponse
 from app.models.common import DeleteConfirm
 from app.models.task import (
     TaskCreate,
@@ -15,8 +16,11 @@ from app.models.task import (
     SetRemindersRequest,
     RemindersListResponse,
 )
+from app.services.drive_service import get_access_token, upload_file
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20MB — same order of magnitude as capture's audio/image limits
 
 
 def _get_owned_task(supabase: Client, task_id: UUID, user_id: str) -> dict:
@@ -143,6 +147,95 @@ def set_task_reminders(
         result = supabase.table("task_reminder_preferences").insert(rows).execute()
         return {"reminders": result.data}
     return {"reminders": []}
+
+
+@router.get("/{task_id}/attachments", response_model=AttachmentListResponse)
+def get_task_attachments(
+    task_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    _get_owned_task(supabase, task_id, current_user.user_id)
+    result = (
+        supabase.table("task_attachments")
+        .select("*")
+        .eq("task_id", str(task_id))
+        .order("created_at")
+        .execute()
+    )
+    return {"attachments": result.data}
+
+
+@router.post("/{task_id}/attachments", response_model=AttachmentResponse, status_code=status.HTTP_201_CREATED)
+async def upload_task_attachment(
+    task_id: UUID,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    _get_owned_task(supabase, task_id, current_user.user_id)
+
+    content = await file.read()
+    if len(content) > MAX_ATTACHMENT_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Attachment too large (max 20MB)",
+        )
+
+    # Best-effort push to Drive, same spirit as every other Drive write in
+    # this backend — a task attachment is still perfectly real in Orbit
+    # even if Drive isn't connected or the upload fails partway.
+    drive_file_id = None
+    access_token = get_access_token(supabase, current_user.user_id)
+    if access_token:
+        user_result = (
+            supabase.table("users").select("drive_root_folder_id").eq("id", current_user.user_id).maybe_single().execute()
+        )
+        root_folder_id = user_result.data.get("drive_root_folder_id") if user_result.data else None
+        if root_folder_id:
+            try:
+                drive_file_id = upload_file(
+                    access_token,
+                    root_folder_id,
+                    file.filename or "attachment",
+                    file.content_type or "application/octet-stream",
+                    content,
+                )
+            except Exception:
+                pass
+
+    insert_result = (
+        supabase.table("task_attachments")
+        .insert(
+            {
+                "task_id": str(task_id),
+                "user_id": current_user.user_id,
+                "file_name": file.filename or "attachment",
+                "mime_type": file.content_type or "application/octet-stream",
+                "size_bytes": len(content),
+                "drive_file_id": drive_file_id,
+            }
+        )
+        .execute()
+    )
+    return insert_result.data[0]
+
+
+@router.delete("/{task_id}/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_task_attachment(
+    task_id: UUID,
+    attachment_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    _get_owned_task(supabase, task_id, current_user.user_id)
+    # Only removes Orbit's own reference — per the established Drive policy
+    # (see Settings' privacy copy), files already written there are never
+    # deleted from Drive itself, even when unlinked in Orbit.
+    supabase.table("task_attachments").delete().eq("id", str(attachment_id)).eq(
+        "task_id", str(task_id)
+    ).execute()
+    return None
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)

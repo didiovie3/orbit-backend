@@ -10,7 +10,7 @@ from app.services.calendar_service import (
 )
 
 
-def _get_access_token(supabase: Client, user_id: str) -> str | None:
+def get_access_token(supabase: Client, user_id: str) -> str | None:
     """Returns a valid access token, refreshing and persisting a new one
     if the stored one has expired. Returns None if the user has no
     calendar connected at all."""
@@ -28,7 +28,7 @@ def _get_access_token(supabase: Client, user_id: str) -> str | None:
 
 
 def run_two_way_sync(supabase: Client, user_id: str) -> dict:
-    access_token = _get_access_token(supabase, user_id)
+    access_token = get_access_token(supabase, user_id)
     if not access_token:
         return {"pushed": 0, "pulled": 0, "synced_at": datetime.now(timezone.utc).isoformat(), "connected": False}
 
@@ -95,10 +95,15 @@ def _pull_calendar_events(supabase: Client, user_id: str, access_token: str) -> 
 
     pulled_count = 0
     for event in events:
+        if event.get("status") == "cancelled":
+            # Only worth acting on if it's an event we'd actually linked to
+            # a task — an unknown cancelled event has nothing to move.
+            if event["id"] in known_event_ids:
+                handle_deleted_calendar_event(supabase, user_id, event["id"])
+            continue
+
         if event["id"] in known_event_ids:
             continue
-        if event.get("status") == "cancelled":
-            continue  # a deleted event we never knew about — nothing to move to unsorted
 
         due_at = event.get("start", {}).get("dateTime")
         if not due_at:

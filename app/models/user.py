@@ -16,6 +16,9 @@ class UserResponse(BaseModel):
     # Derived, not a raw column — tells the client whether Calendar is
     # connected without ever exposing the actual stored OAuth token.
     calendar_connected: bool
+    # Same derivation pattern as calendar_connected, for Drive's independent
+    # connect flow (app/routers/drive.py).
+    drive_connected: bool
     created_at: str
 
 

@@ -109,6 +109,39 @@ def generate_status_update_draft(
     return response.text.strip()
 
 
+EOD_REFLECTION_PROMPT = """\
+Write one short, grounded sentence reflecting on today's output, for
+someone managing ADHD-related task overwhelm. Base it only on the real
+numbers below — no generic motivational filler, no exclamation-mark
+overload.
+
+Tasks completed today:
+{done_list}
+
+Tasks carried forward to tomorrow: {carried_count}
+Current streak: {streak} day(s)
+"""
+
+
+def generate_eod_reflection(done_labels: list[str], carried_count: int, streak: int) -> str:
+    """One-line reflection appended to the end-of-day brief's stats line.
+    Same plain-text-in, plain-text-out shape as generate_status_update_draft."""
+    client = get_gemini_client()
+
+    done_list = "\n".join(f"- {label}" for label in done_labels) if done_labels else "(none)"
+    prompt = EOD_REFLECTION_PROMPT.format(
+        done_list=done_list,
+        carried_count=carried_count,
+        streak=streak,
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt],
+    )
+    return response.text.strip()
+
+
 def get_gemini_client() -> genai.Client:
     settings = get_settings()
     if not settings.gemini_api_key:

@@ -9,6 +9,7 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+CALENDAR_CHANNELS_STOP_URL = "https://www.googleapis.com/calendar/v3/channels/stop"
 
 
 def exchange_auth_code(auth_code: str) -> dict:
@@ -140,3 +141,81 @@ def update_calendar_event(access_token: str, event_id: str, label: str, due_at: 
         },
     )
     response.raise_for_status()
+
+
+def create_calendar_block_event(
+    access_token: str, title: str, start_at: str, end_at: str, description: str | None = None
+) -> str:
+    """Time blocks have a real start/end span (unlike tasks, which push as
+    point-in-time start==end deadlines) — separate function rather than
+    overloading create_calendar_event's narrower signature."""
+    body = {"summary": title, "start": {"dateTime": start_at}, "end": {"dateTime": end_at}}
+    if description:
+        body["description"] = description
+    response = httpx.post(CALENDAR_API_BASE, headers={"Authorization": f"Bearer {access_token}"}, json=body)
+    response.raise_for_status()
+    return response.json()["id"]
+
+
+def update_calendar_block_event(
+    access_token: str, event_id: str, title: str, start_at: str, end_at: str, description: str | None = None
+) -> None:
+    body = {"summary": title, "start": {"dateTime": start_at}, "end": {"dateTime": end_at}}
+    if description:
+        body["description"] = description
+    response = httpx.patch(
+        f"{CALENDAR_API_BASE}/{event_id}",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json=body,
+    )
+    response.raise_for_status()
+
+
+def delete_calendar_event(access_token: str, event_id: str) -> None:
+    """Used for time blocks (tasks are never hard-deleted from the calendar
+    side — a task moving to done/archived just stops updating its event).
+    404/410 mean Google already considers it gone, which counts as success
+    for an idempotent delete."""
+    response = httpx.delete(f"{CALENDAR_API_BASE}/{event_id}", headers={"Authorization": f"Bearer {access_token}"})
+    if response.status_code not in (200, 204, 404, 410):
+        response.raise_for_status()
+
+
+def register_webhook_channel(access_token: str, channel_id: str, channel_token: str, address: str) -> dict:
+    """
+    Registers a push-notification channel with Google so it POSTs to our
+    /calendar/webhook whenever something changes, instead of us only ever
+    finding out via manual sync. Requires `address` to be a real public
+    HTTPS URL Google can reach — the caller is responsible for only calling
+    this when one is actually configured (see Settings.webhook_base_url).
+
+    Returns Google's channel resource, which includes "resourceId" —
+    needed later to unregister the channel via channels.stop().
+    """
+    response = httpx.post(
+        f"{CALENDAR_API_BASE}/watch",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "id": channel_id,
+            "type": "web_hook",
+            "address": address,
+            "token": channel_token,
+        },
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def stop_webhook_channel(access_token: str, channel_id: str, resource_id: str) -> None:
+    """Best-effort, same spirit as revoke_token — if this fails, the channel
+    naturally expires on Google's side regardless (channels aren't
+    permanent, they carry their own "expiration" from register above)."""
+    try:
+        response = httpx.post(
+            CALENDAR_CHANNELS_STOP_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"id": channel_id, "resourceId": resource_id},
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        pass

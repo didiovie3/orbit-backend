@@ -45,15 +45,29 @@ def _get_firebase_app():
         return None
 
 
-def send_push_notification(fcm_token: str | None, title: str, body: str) -> bool:
+def send_push_notification(
+    fcm_token: str | None, title: str, body: str, data: dict[str, str] | None = None
+) -> bool:
     """
     Returns True if a push was actually sent, False if it was skipped
     (no app configured, or no token for this user — e.g. they haven't
     opened the Android app yet, or notifications aren't set up). Never
     raises — a failed/skipped push should never take down the job that
     called it; the reminder still "fires" and gets logged either way,
-    the notification is just one (currently unbuilt) delivery channel
-    for it.
+    the notification is just one delivery channel for it.
+
+    `data` matters more than `title`/`body` here — the Android client's
+    OrbitMessagingService builds its own actionable notification (with
+    Reschedule/Update Progress buttons) entirely from the data payload
+    and ignores the `notification` block below. Sending no data (the
+    previous behavior) meant the client silently discarded every push,
+    since it early-returns when data["task_id"] is missing. One caveat
+    this doesn't attempt to fix: FCM messages that carry both a
+    `notification` and a `data` block only guarantee onMessageReceived
+    fires while the app is foregrounded — backgrounded delivery can fall
+    back to a system-drawn notification instead, without the custom
+    actions. Not verifiable without a real device, so left as a known
+    gap rather than guessed at.
     """
     if not fcm_token:
         return False
@@ -66,6 +80,7 @@ def send_push_notification(fcm_token: str | None, title: str, body: str) -> bool
 
     message = messaging.Message(
         notification=messaging.Notification(title=title, body=body),
+        data=data or {},
         token=fcm_token,
     )
     try:

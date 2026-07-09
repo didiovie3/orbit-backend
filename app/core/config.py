@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = ""
 
+    # Public HTTPS base URL this server is reachable at (e.g. once deployed
+    # behind a real domain) — needed to register a Google Calendar push
+    # notification channel, since Google has to be able to reach OUR
+    # webhook. Blank is a completely normal state for local dev: calendar
+    # connect/sync/disconnect all work fine without it, manual sync just
+    # has to stand in for the push-triggered kind until this is set.
+    webhook_base_url: str = ""
+
     # Gemini — required once you build capture/AI endpoints
     gemini_api_key: str = ""
 

@@ -1,13 +1,20 @@
 import json
 import secrets
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.config import get_settings
 from app.db.supabase_client import get_supabase
 from app.models.calendar import ConnectCalendarRequest, ConnectCalendarResponse, SyncResponse
-from app.services.calendar_service import exchange_auth_code, revoke_token
+from app.services.calendar_service import (
+    exchange_auth_code,
+    register_webhook_channel,
+    revoke_token,
+    stop_webhook_channel,
+)
 from app.services.calendar_sync import run_two_way_sync
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
@@ -27,22 +34,41 @@ def connect_calendar(
             detail=f"Google token exchange failed: {exc}",
         ) from exc
 
-    # channel_token: a secret we'd hand to Google's events.watch() call so
-    # it echoes it back in every webhook request's X-Goog-Channel-Token
-    # header, letting us verify a request genuinely came from a channel
-    # we registered. Generated and stored now so the design is complete
-    # and testable — but see calendar_sync.py's module docstring: the
-    # actual watch() registration call isn't wired up yet, since it needs
-    # a public webhook URL this local setup doesn't have.
-    stored_token_json = json.dumps(
-        {
-            "access_token": tokens["access_token"],
-            "refresh_token": tokens["refresh_token"],
-            "expires_at": tokens["expires_at"],
-            "channel_token": secrets.token_urlsafe(32),
-        }
-    )
-    supabase.table("users").update({"google_calendar_token": stored_token_json}).eq(
+    # channel_token: a secret handed to Google's events.watch() call so it
+    # echoes it back in every webhook request's X-Goog-Channel-Token header,
+    # letting us verify a request genuinely came from a channel we
+    # registered.
+    token_data = {
+        "access_token": tokens["access_token"],
+        "refresh_token": tokens["refresh_token"],
+        "expires_at": tokens["expires_at"],
+        "channel_token": secrets.token_urlsafe(32),
+    }
+
+    # Registering the actual watch channel needs a public HTTPS URL Google
+    # can reach — never true for a bare "http://127.0.0.1:8000" local dev
+    # setup, so this stays a no-op (manual /calendar/sync still works fine)
+    # until webhook_base_url is set, e.g. once this is deployed somewhere
+    # with a real domain.
+    settings = get_settings()
+    if settings.webhook_base_url:
+        channel_id = str(uuid.uuid4())
+        try:
+            channel = register_webhook_channel(
+                access_token=tokens["access_token"],
+                channel_id=channel_id,
+                channel_token=token_data["channel_token"],
+                address=f"{settings.webhook_base_url.rstrip('/')}/v1/calendar/webhook",
+            )
+            token_data["channel_id"] = channel_id
+            token_data["resource_id"] = channel["resourceId"]
+            token_data["channel_expiration"] = channel.get("expiration")
+        except Exception:
+            # Best-effort — the OAuth connection itself still succeeded,
+            # and manual sync is a complete fallback for whatever broke here.
+            pass
+
+    supabase.table("users").update({"google_calendar_token": json.dumps(token_data)}).eq(
         "id", current_user.user_id
     ).execute()
 
@@ -108,6 +134,10 @@ def disconnect_calendar(
     stored = user_result.data.get("google_calendar_token") if user_result.data else None
     if stored:
         token_data = json.loads(stored)
+        if token_data.get("channel_id") and token_data.get("resource_id"):
+            stop_webhook_channel(
+                token_data["access_token"], token_data["channel_id"], token_data["resource_id"]
+            )
         revoke_token(token_data.get("refresh_token") or token_data.get("access_token"))
 
     supabase.table("users").update({"google_calendar_token": None}).eq("id", current_user.user_id).execute()
