@@ -14,6 +14,7 @@ from app.services.calendar_service import (
     stop_webhook_channel,
     update_calendar_event,
 )
+from app.services.projects import get_unsorted_project_id
 
 # Renew any channel expiring within this window — comfortably inside
 # Google's 7-day channel max, so a job checking every few hours never
@@ -170,13 +171,10 @@ def _pull_calendar_events(supabase: Client, user_id: str, access_token: str) -> 
     )
     known_event_ids = {t["calendar_event_id"] for t in existing_result.data}
 
-    unsorted_result = execute_maybe_single(
-        supabase.table("projects")
-        .select("id")
-        .eq("owner_id", user_id)
-        .eq("is_unsorted", True)
-    )
-    unsorted_project_id = unsorted_result.data["id"] if unsorted_result.data else None
+    # Create-fallback (not just a lookup) — same invariant as every other
+    # task-creation path in this backend: "no project" always means the
+    # real Unsorted project, never a null FK.
+    unsorted_project_id = get_unsorted_project_id(supabase, user_id)
 
     pulled_count = 0
     for event in events:
@@ -217,13 +215,7 @@ def handle_deleted_calendar_event(supabase: Client, user_id: str, calendar_event
     moves to unsorted rather than being deleted. Called by the webhook
     handler once it detects a cancelled event during its pull.
     """
-    unsorted_result = execute_maybe_single(
-        supabase.table("projects")
-        .select("id")
-        .eq("owner_id", user_id)
-        .eq("is_unsorted", True)
-    )
-    unsorted_project_id = unsorted_result.data["id"] if unsorted_result.data else None
+    unsorted_project_id = get_unsorted_project_id(supabase, user_id)
 
     supabase.table("tasks").update(
         {"project_id": unsorted_project_id, "calendar_event_id": None}

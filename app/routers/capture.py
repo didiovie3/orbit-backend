@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
-from app.db.supabase_client import get_supabase
+from app.db.supabase_client import execute_maybe_single, get_supabase
 from app.models.capture import CaptureImageResponse, CaptureVoiceResponse, ConfirmCaptureRequest
 from app.models.task import TaskResponse
 from app.services.audiences import is_owned_audience
 from app.services.gemini_service import extract_hierarchy_from_audio, extract_hierarchy_from_image
+from app.services.projects import is_owned_project
 from app.services.task_creation import save_hierarchy_as_tasks
 
 router = APIRouter(prefix="/capture", tags=["capture"])
@@ -137,6 +138,33 @@ def confirm_capture(
 
     if body.audience_id and not is_owned_audience(supabase, str(body.audience_id), current_user.user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audience not found")
+
+    if body.project_id and not is_owned_project(supabase, str(body.project_id), current_user.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    # Same ownership gap as project_id/audience_id above — without this, a
+    # client could link its new tasks to another user's voice/image/note
+    # log via the join tables in save_hierarchy_as_tasks below.
+    if body.voice_log_id:
+        result = execute_maybe_single(
+            supabase.table("voice_logs").select("id").eq("id", str(body.voice_log_id)).eq("user_id", current_user.user_id)
+        )
+        if not result.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice log not found")
+
+    if body.image_log_id:
+        result = execute_maybe_single(
+            supabase.table("image_logs").select("id").eq("id", str(body.image_log_id)).eq("user_id", current_user.user_id)
+        )
+        if not result.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image log not found")
+
+    if body.note_id:
+        result = execute_maybe_single(
+            supabase.table("notes").select("id").eq("id", str(body.note_id)).eq("user_id", current_user.user_id)
+        )
+        if not result.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
 
     created = save_hierarchy_as_tasks(
         supabase=supabase,

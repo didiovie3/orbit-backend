@@ -19,7 +19,7 @@ from app.models.task import (
 )
 from app.services.audiences import is_owned_audience
 from app.services.drive_service import get_access_token, get_or_create_project_drive_folder, upload_file
-from app.services.projects import get_unsorted_project_id
+from app.services.projects import get_unsorted_project_id, is_owned_project
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -81,6 +81,9 @@ def create_task(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
+    if body.project_id and not is_owned_project(supabase, str(body.project_id), current_user.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
     # "No project" means the real Unsorted project, never a null FK — see
     # app/services/projects.py. Sub-tasks inherit sort_index scoping by
     # parent_task_id regardless, so this only affects project_id itself.
@@ -88,6 +91,12 @@ def create_task(
 
     if body.audience_id and not is_owned_audience(supabase, str(body.audience_id), current_user.user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audience not found")
+
+    if body.parent_task_id:
+        # Raises 404 if the parent doesn't exist or isn't this user's —
+        # otherwise a client could nest its own new task under someone
+        # else's, same ownership gap as project_id/audience_id above.
+        _get_owned_task(supabase, body.parent_task_id, current_user.user_id)
 
     sort_index = 0
     if body.parent_task_id:
@@ -306,6 +315,13 @@ def update_task(
     if updates.get("audience_id") and not is_owned_audience(supabase, updates["audience_id"], current_user.user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audience not found")
 
+    if updates.get("project_id") and not is_owned_project(supabase, updates["project_id"], current_user.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    if updates.get("parent_task_id"):
+        # Raises 404 if not this user's — see the same check in create_task.
+        _get_owned_task(supabase, updates["parent_task_id"], current_user.user_id)
+
     if not updates:
         return _get_owned_task(supabase, task_id, current_user.user_id)
 
@@ -328,20 +344,29 @@ def reorder_subtasks(
 ):
     _get_owned_task(supabase, task_id, current_user.user_id)  # 404s if parent isn't owned
 
-    for idx, sub_id in enumerate(body.task_ids):
-        result = (
-            supabase.table("tasks")
-            .update({"sort_index": idx})
-            .eq("id", str(sub_id))
-            .eq("user_id", current_user.user_id)
-            .eq("parent_task_id", str(task_id))
-            .execute()
+    # Validate every id up front — updating sort_index one at a time and
+    # only discovering a bad id partway through would leave the list
+    # half-reordered with no way back, since earlier updates in the loop
+    # already committed.
+    existing = (
+        supabase.table("tasks")
+        .select("id")
+        .eq("user_id", current_user.user_id)
+        .eq("parent_task_id", str(task_id))
+        .execute()
+    )
+    existing_ids = {row["id"] for row in existing.data}
+    missing = [str(sub_id) for sub_id in body.task_ids if str(sub_id) not in existing_ids]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sub-task {missing[0]} not found under this parent",
         )
-        if not result.data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Sub-task {sub_id} not found under this parent",
-            )
+
+    for idx, sub_id in enumerate(body.task_ids):
+        supabase.table("tasks").update({"sort_index": idx}).eq("id", str(sub_id)).eq(
+            "user_id", current_user.user_id
+        ).eq("parent_task_id", str(task_id)).execute()
     return None
 
 

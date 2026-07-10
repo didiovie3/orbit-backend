@@ -28,3 +28,15 @@ def get_unsorted_project_id(supabase: Client, user_id: str) -> str:
         .execute()
     )
     return created.data[0]["id"]
+
+
+def is_owned_project(supabase: Client, project_id: str, user_id: str) -> bool:
+    """Whether project_id both exists and belongs to user_id. Every place a
+    task/note/time-block can be tagged with a project_id needs this check —
+    the service-role client bypasses RLS, so without it a client could
+    attach its own rows to another user's project just by guessing/observing
+    its id, same class of gap as audiences.is_owned_audience."""
+    result = execute_maybe_single(
+        supabase.table("projects").select("id").eq("id", project_id).eq("owner_id", user_id)
+    )
+    return result.data is not None

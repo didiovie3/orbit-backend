@@ -1,9 +1,16 @@
 from datetime import datetime, timezone
 
+from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.db.supabase_client import execute_maybe_single
 from app.services.push_notifications import send_push_notification
+
+# Postgres SQLSTATE for a unique-constraint violation — reminder_events has
+# a UNIQUE(task_id, scheduled_for) constraint (see the
+# add_reminder_events_task_scheduled_unique migration) backing the
+# insert-conflict check below.
+UNIQUE_VIOLATION_CODE = "23505"
 
 
 def run_fire_reminders_job(supabase: Client) -> dict:
@@ -12,10 +19,14 @@ def run_fire_reminders_job(supabase: Client) -> dict:
     and for each one not already recorded in reminder_events, creates the
     firing record and attempts a push.
 
-    Idempotent by design — running this twice in a row (or every minute,
-    which is the real intent) won't double-fire the same reminder, since
-    each one is checked against reminder_events (matched on task_id +
-    scheduled_for) before anything happens.
+    The upfront `existing` check below is just a cheap fast path — it isn't
+    atomic with the insert, so two overlapping runs of this job (e.g. a
+    slow run still going when the next minute's fires, or a manual
+    /debug/fire-reminders overlapping the scheduled one) could both pass it
+    before either inserts. The UNIQUE(task_id, scheduled_for) constraint on
+    reminder_events is what actually guarantees only one fire ever "wins" —
+    the insert below catches the resulting conflict and treats it as
+    "someone else already fired this" instead of double-pushing.
     """
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -63,18 +74,27 @@ def run_fire_reminders_job(supabase: Client) -> dict:
         )
         nudge_count = (prior_fires.count or 0) + 1
 
-        reminder_event_result = (
-            supabase.table("reminder_events")
-            .insert(
-                {
-                    "task_id": task["id"],
-                    "scheduled_for": pref["remind_at"],
-                    "fired_at": now_iso,
-                    "nudge_count": nudge_count,
-                }
+        try:
+            reminder_event_result = (
+                supabase.table("reminder_events")
+                .insert(
+                    {
+                        "task_id": task["id"],
+                        "scheduled_for": pref["remind_at"],
+                        "fired_at": now_iso,
+                        "nudge_count": nudge_count,
+                    }
+                )
+                .execute()
             )
-            .execute()
-        )
+        except APIError as exc:
+            if exc.code == UNIQUE_VIOLATION_CODE:
+                # A concurrent run already inserted this exact
+                # (task_id, scheduled_for) between our fast-path check
+                # above and this insert — it already handled the push.
+                skipped_already_fired += 1
+                continue
+            raise
         reminder_event_id = reminder_event_result.data[0]["id"]
         fired_count += 1
 

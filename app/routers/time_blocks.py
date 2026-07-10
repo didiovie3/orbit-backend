@@ -18,6 +18,7 @@ from app.services.calendar_service import (
     update_calendar_block_event,
 )
 from app.services.calendar_sync import get_access_token
+from app.services.projects import is_owned_project
 
 router = APIRouter(prefix="/time-blocks", tags=["time-blocks"])
 
@@ -54,6 +55,9 @@ def create_time_block(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
+    if not is_owned_project(supabase, str(body.project_id), current_user.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
     # Best-effort push, same spirit as task due_at pushes — a failed or
     # absent calendar connection still leaves a perfectly real time block
     # in Orbit, it just won't show up on Google's side yet.
@@ -100,6 +104,8 @@ def update_time_block(
 
     updates = body.model_dump(exclude_unset=True, exclude={"project_id", "start_at", "end_at"})
     if body.project_id is not None:
+        if not is_owned_project(supabase, str(body.project_id), current_user.user_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
         updates["project_id"] = str(body.project_id)
     if body.start_at is not None:
         updates["start_at"] = body.start_at.isoformat()
@@ -122,7 +128,9 @@ def update_time_block(
                 pass
 
     if updates:
-        supabase.table("time_blocks").update(updates).eq("id", str(time_block_id)).execute()
+        supabase.table("time_blocks").update(updates).eq("id", str(time_block_id)).eq(
+            "user_id", current_user.user_id
+        ).execute()
 
     result = execute_maybe_single(supabase.table("time_blocks").select("*").eq("id", str(time_block_id)))
     return result.data
@@ -150,5 +158,7 @@ def delete_time_block(
             except Exception:
                 pass
 
-    supabase.table("time_blocks").delete().eq("id", str(time_block_id)).execute()
+    supabase.table("time_blocks").delete().eq("id", str(time_block_id)).eq(
+        "user_id", current_user.user_id
+    ).execute()
     return None

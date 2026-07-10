@@ -20,7 +20,7 @@ from app.services.drive_service import (
 )
 from app.services.drive_service import get_access_token as get_drive_access_token
 from app.services.gemini_service import generate_note_summary
-from app.services.projects import get_unsorted_project_id
+from app.services.projects import get_unsorted_project_id, is_owned_project
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -109,6 +109,9 @@ def create_note(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
+    if body.project_id and not is_owned_project(supabase, str(body.project_id), current_user.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
     # "No project" means the real Unsorted project, never a null FK — same
     # invariant as tasks.py's create_task (see app/services/projects.py).
     project_id = str(body.project_id) if body.project_id else get_unsorted_project_id(supabase, current_user.user_id)
@@ -160,6 +163,8 @@ def update_note(
             # null FK — same invariant as create_note.
             updates["project_id"] = get_unsorted_project_id(supabase, current_user.user_id)
         else:
+            if not is_owned_project(supabase, str(updates["project_id"]), current_user.user_id):
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
             updates["project_id"] = str(updates["project_id"])
     if not updates:
         return existing_note

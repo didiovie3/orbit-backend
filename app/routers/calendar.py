@@ -34,6 +34,25 @@ def connect_calendar(
             detail=f"Google token exchange failed: {exc}",
         ) from exc
 
+    # Reconnecting (already-connected user runs through /connect again)
+    # would otherwise overwrite the stored channel_id/resource_id below
+    # without ever stopping the old channel — Google keeps pushing to it,
+    # and there's no longer a stored id to stop it with later. Best-effort,
+    # same spirit as disconnect_calendar: a stale/expired old access_token
+    # just means stop_webhook_channel's own try/except swallows the 401.
+    existing_result = execute_maybe_single(
+        supabase.table("users").select("google_calendar_token").eq("id", current_user.user_id)
+    )
+    existing_stored = existing_result.data.get("google_calendar_token") if existing_result.data else None
+    if existing_stored:
+        existing_token_data = json.loads(existing_stored)
+        if existing_token_data.get("channel_id") and existing_token_data.get("resource_id"):
+            stop_webhook_channel(
+                existing_token_data["access_token"],
+                existing_token_data["channel_id"],
+                existing_token_data["resource_id"],
+            )
+
     # channel_token: a secret handed to Google's events.watch() call so it
     # echoes it back in every webhook request's X-Goog-Channel-Token header,
     # letting us verify a request genuinely came from a channel we
