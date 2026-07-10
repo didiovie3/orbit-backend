@@ -15,6 +15,7 @@ from app.routers import (
     calendar,
     capture,
     drive,
+    energy_checks,
     health,
     notes,
     projects,
@@ -92,6 +93,7 @@ app.include_router(briefs.router, prefix="/v1")
 app.include_router(drive.router, prefix="/v1")
 app.include_router(time_blocks.router, prefix="/v1")
 app.include_router(reminder_events.router, prefix="/v1")
+app.include_router(energy_checks.router, prefix="/v1")
 
 
 @app.get("/")
