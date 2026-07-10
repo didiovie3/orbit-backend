@@ -7,7 +7,7 @@ from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
 from app.core.config import get_settings
-from app.db.supabase_client import get_supabase
+from app.db.supabase_client import execute_maybe_single, get_supabase
 from app.models.calendar import ConnectCalendarRequest, ConnectCalendarResponse, SyncResponse
 from app.services.calendar_service import (
     exchange_auth_code,
@@ -128,8 +128,8 @@ def disconnect_calendar(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
-    user_result = (
-        supabase.table("users").select("google_calendar_token").eq("id", current_user.user_id).maybe_single().execute()
+    user_result = execute_maybe_single(
+        supabase.table("users").select("google_calendar_token").eq("id", current_user.user_id)
     )
     stored = user_result.data.get("google_calendar_token") if user_result.data else None
     if stored:

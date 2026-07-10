@@ -46,3 +46,19 @@ class ProjectResponse(BaseModel):
 
 class ProjectListResponse(BaseModel):
     projects: list[ProjectResponse]
+
+
+class ProjectFileResponse(BaseModel):
+    """A single Drive-backed file belonging to this project — either a task
+    attachment or a note, whichever actually has a drive_file_id (i.e. was
+    really synced, not just created while Drive was disconnected)."""
+
+    id: UUID
+    name: str
+    drive_file_id: str
+    created_at: datetime
+    source: str  # "attachment" | "note"
+
+
+class ProjectFilesListResponse(BaseModel):
+    files: list[ProjectFileResponse]

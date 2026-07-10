@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
-from app.db.supabase_client import get_supabase
+from app.db.supabase_client import execute_maybe_single, get_supabase
 from app.models.attachment import AttachmentListResponse, AttachmentResponse
 from app.models.common import DeleteConfirm
 from app.models.task import (
@@ -17,7 +17,8 @@ from app.models.task import (
     RemindersListResponse,
     SubtaskReorderRequest,
 )
-from app.services.drive_service import get_access_token, upload_file
+from app.services.audiences import is_owned_audience
+from app.services.drive_service import get_access_token, get_or_create_project_drive_folder, upload_file
 from app.services.projects import get_unsorted_project_id
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -34,13 +35,11 @@ def _get_owned_task(supabase: Client, task_id: UUID, user_id: str) -> dict:
     database. Forgetting this check on any one endpoint would let any
     logged-in user read or modify anyone else's tasks by guessing IDs.
     """
-    result = (
+    result = execute_maybe_single(
         supabase.table("tasks")
         .select("*")
         .eq("id", str(task_id))
         .eq("user_id", user_id)
-        .maybe_single()
-        .execute()
     )
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
@@ -86,6 +85,9 @@ def create_task(
     # app/services/projects.py. Sub-tasks inherit sort_index scoping by
     # parent_task_id regardless, so this only affects project_id itself.
     project_id = str(body.project_id) if body.project_id else get_unsorted_project_id(supabase, current_user.user_id)
+
+    if body.audience_id and not is_owned_audience(supabase, str(body.audience_id), current_user.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audience not found")
 
     sort_index = 0
     if body.parent_task_id:
@@ -203,7 +205,7 @@ async def upload_task_attachment(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
-    _get_owned_task(supabase, task_id, current_user.user_id)
+    task = _get_owned_task(supabase, task_id, current_user.user_id)
 
     content = await file.read()
     if len(content) > MAX_ATTACHMENT_BYTES:
@@ -214,19 +216,28 @@ async def upload_task_attachment(
 
     # Best-effort push to Drive, same spirit as every other Drive write in
     # this backend — a task attachment is still perfectly real in Orbit
-    # even if Drive isn't connected or the upload fails partway.
+    # even if Drive isn't connected or the upload fails partway. Lands in
+    # the task's own project's Drive subfolder (not the flat root) so the
+    # Project Detail Files tab can list it back.
     drive_file_id = None
     access_token = get_access_token(supabase, current_user.user_id)
     if access_token:
-        user_result = (
-            supabase.table("users").select("drive_root_folder_id").eq("id", current_user.user_id).maybe_single().execute()
+        user_result = execute_maybe_single(
+            supabase.table("users").select("drive_root_folder_id").eq("id", current_user.user_id)
         )
         root_folder_id = user_result.data.get("drive_root_folder_id") if user_result.data else None
-        if root_folder_id:
+        project_result = execute_maybe_single(
+            supabase.table("projects").select("id, name").eq("id", task["project_id"])
+        )
+        project = project_result.data
+        if root_folder_id and project:
             try:
+                project_folder_id = get_or_create_project_drive_folder(
+                    supabase, access_token, root_folder_id, project["id"], project["name"]
+                )
                 drive_file_id = upload_file(
                     access_token,
-                    root_folder_id,
+                    project_folder_id,
                     file.filename or "attachment",
                     file.content_type or "application/octet-stream",
                     content,
@@ -291,6 +302,9 @@ def update_task(
     for uuid_field in ("project_id", "parent_task_id", "audience_id"):
         if uuid_field in updates and updates[uuid_field] is not None:
             updates[uuid_field] = str(updates[uuid_field])
+
+    if updates.get("audience_id") and not is_owned_audience(supabase, updates["audience_id"], current_user.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audience not found")
 
     if not updates:
         return _get_owned_task(supabase, task_id, current_user.user_id)

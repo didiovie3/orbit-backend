@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
-from app.db.supabase_client import get_supabase
+from app.db.supabase_client import execute_maybe_single, get_supabase
 from app.models.common import DeleteConfirm
 from app.models.time_block import (
     TimeBlockCreate,
@@ -23,13 +23,11 @@ router = APIRouter(prefix="/time-blocks", tags=["time-blocks"])
 
 
 def _get_owned_time_block(supabase: Client, time_block_id: UUID, user_id: str) -> dict:
-    result = (
+    result = execute_maybe_single(
         supabase.table("time_blocks")
         .select("*")
         .eq("id", str(time_block_id))
         .eq("user_id", user_id)
-        .maybe_single()
-        .execute()
     )
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Time block not found")
@@ -126,7 +124,7 @@ def update_time_block(
     if updates:
         supabase.table("time_blocks").update(updates).eq("id", str(time_block_id)).execute()
 
-    result = supabase.table("time_blocks").select("*").eq("id", str(time_block_id)).maybe_single().execute()
+    result = execute_maybe_single(supabase.table("time_blocks").select("*").eq("id", str(time_block_id)))
     return result.data
 
 

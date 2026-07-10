@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
-from app.db.supabase_client import get_supabase
+from app.db.supabase_client import execute_maybe_single, get_supabase
 from app.models.user import UserResponse, UserUpdate
 from app.services.streak import compute_streak
 
@@ -25,8 +25,8 @@ def get_me(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
-    result = (
-        supabase.table("users").select("*").eq("id", current_user.user_id).maybe_single().execute()
+    result = execute_maybe_single(
+        supabase.table("users").select("*").eq("id", current_user.user_id)
     )
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -43,7 +43,7 @@ def update_me(
     if updates:
         supabase.table("users").update(updates).eq("id", current_user.user_id).execute()
 
-    result = (
-        supabase.table("users").select("*").eq("id", current_user.user_id).maybe_single().execute()
+    result = execute_maybe_single(
+        supabase.table("users").select("*").eq("id", current_user.user_id)
     )
     return _to_response(result.data, supabase)

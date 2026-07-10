@@ -66,6 +66,8 @@ in-progress tasks, for an audience called "{audience_name}".
 
 {tone_instruction}
 
+{style_instruction}
+
 Tasks to summarize:
 {task_list}
 
@@ -77,10 +79,22 @@ Do not invent details that aren't in the task list above.
 """
 
 
+def _style_instruction(writing_style_notes: str | None) -> str:
+    """Shared across every generation function below — a user-level, global
+    preference (set once in Settings) layered on top of whatever narrower
+    context each prompt already has (e.g. status updates' per-audience
+    tone_notes). Returns an empty string when unset so the prompt template
+    just gets a blank line instead of a dangling "None" everywhere."""
+    if not writing_style_notes:
+        return ""
+    return f"The user's general writing style preferences, which should shape tone and phrasing throughout: {writing_style_notes}"
+
+
 def generate_status_update_draft(
     task_labels: list[str],
     audience_name: str,
     tone_notes: str | None,
+    writing_style_notes: str | None = None,
 ) -> str:
     """
     Plain text in, plain text out — simpler than the voice/image
@@ -99,6 +113,7 @@ def generate_status_update_draft(
     prompt = STATUS_UPDATE_PROMPT.format(
         audience_name=audience_name,
         tone_instruction=tone_instruction,
+        style_instruction=_style_instruction(writing_style_notes),
         task_list=task_list,
     )
 
@@ -115,6 +130,8 @@ someone managing ADHD-related task overwhelm. Base it only on the real
 numbers below — no generic motivational filler, no exclamation-mark
 overload.
 
+{style_instruction}
+
 Tasks completed today:
 {done_list}
 
@@ -123,13 +140,19 @@ Current streak: {streak} day(s)
 """
 
 
-def generate_eod_reflection(done_labels: list[str], carried_count: int, streak: int) -> str:
+def generate_eod_reflection(
+    done_labels: list[str],
+    carried_count: int,
+    streak: int,
+    writing_style_notes: str | None = None,
+) -> str:
     """One-line reflection appended to the end-of-day brief's stats line.
     Same plain-text-in, plain-text-out shape as generate_status_update_draft."""
     client = get_gemini_client()
 
     done_list = "\n".join(f"- {label}" for label in done_labels) if done_labels else "(none)"
     prompt = EOD_REFLECTION_PROMPT.format(
+        style_instruction=_style_instruction(writing_style_notes),
         done_list=done_list,
         carried_count=carried_count,
         streak=streak,
@@ -146,6 +169,8 @@ NOTE_SUMMARY_PROMPT = """\
 Summarize the following note in 1-2 short sentences — just enough for
 someone to recall what it's about without rereading the whole thing.
 
+{style_instruction}
+
 Note:
 {content}
 
@@ -153,11 +178,14 @@ Write only the summary itself — no preamble, no "This note is about...".
 """
 
 
-def generate_note_summary(content: str) -> str:
+def generate_note_summary(content: str, writing_style_notes: str | None = None) -> str:
     """Same plain-text-in, plain-text-out shape as generate_status_update_draft."""
     client = get_gemini_client()
 
-    prompt = NOTE_SUMMARY_PROMPT.format(content=content)
+    prompt = NOTE_SUMMARY_PROMPT.format(
+        style_instruction=_style_instruction(writing_style_notes),
+        content=content,
+    )
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",

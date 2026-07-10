@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from supabase import Client
 
+from app.db.supabase_client import execute_maybe_single
 from app.services.gemini_service import generate_eod_reflection
 from app.services.streak import compute_streak
 
@@ -105,11 +106,17 @@ def generate_eod_brief_content(supabase: Client, user_id: str) -> str:
         f"Current streak: {streak} day{'s' if streak != 1 else ''}."
     )
 
+    user_result = execute_maybe_single(
+        supabase.table("users").select("writing_style_notes").eq("id", user_id)
+    )
+    writing_style_notes = user_result.data.get("writing_style_notes") if user_result.data else None
+
     try:
         reflection = generate_eod_reflection(
             done_labels=[t["label"] for t in done_today],
             carried_count=len(carried_forward),
             streak=streak,
+            writing_style_notes=writing_style_notes,
         )
     except Exception:
         # Gemini being unavailable shouldn't block the brief entirely —

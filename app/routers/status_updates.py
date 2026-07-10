@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
-from app.db.supabase_client import get_supabase
+from app.db.supabase_client import execute_maybe_single, get_supabase
 from app.models.status_update import (
     GenerateStatusUpdateRequest,
     SendStatusUpdateRequest,
@@ -52,13 +52,11 @@ def generate_draft(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
-    audience_result = (
+    audience_result = execute_maybe_single(
         supabase.table("audiences")
         .select("*")
         .eq("id", str(body.audience_id))
         .eq("user_id", current_user.user_id)
-        .maybe_single()
-        .execute()
     )
     if not audience_result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audience not found")
@@ -99,11 +97,19 @@ def generate_draft(
     task_labels = [t["label"] for t in tasks_result.data]
     task_ids = [t["id"] for t in tasks_result.data]
 
+    user_result = execute_maybe_single(
+        supabase.table("users")
+        .select("writing_style_notes")
+        .eq("id", current_user.user_id)
+    )
+    writing_style_notes = user_result.data.get("writing_style_notes") if user_result.data else None
+
     try:
         draft_text = generate_status_update_draft(
             task_labels=task_labels,
             audience_name=audience["name"],
             tone_notes=audience.get("tone_notes"),
+            writing_style_notes=writing_style_notes,
         )
     except Exception as exc:
         raise HTTPException(
@@ -137,13 +143,11 @@ def send_status_update(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
-    existing = (
+    existing = execute_maybe_single(
         supabase.table("status_updates")
         .select("*")
         .eq("id", str(status_update_id))
         .eq("user_id", current_user.user_id)
-        .maybe_single()
-        .execute()
     )
     if not existing.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Status update not found")

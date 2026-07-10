@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from supabase import Client
 
+from app.db.supabase_client import execute_maybe_single
 from app.services.push_notifications import send_push_notification
 
 
@@ -41,12 +42,10 @@ def run_fire_reminders_job(supabase: Client) -> dict:
             skipped_already_fired += 1
             continue
 
-        task_result = (
+        task_result = execute_maybe_single(
             supabase.table("tasks")
             .select("id, user_id, label, due_at, project_id, location, status")
             .eq("id", pref["task_id"])
-            .maybe_single()
-            .execute()
         )
         task = task_result.data
         if not task:
@@ -79,15 +78,15 @@ def run_fire_reminders_job(supabase: Client) -> dict:
         reminder_event_id = reminder_event_result.data[0]["id"]
         fired_count += 1
 
-        user_result = (
-            supabase.table("users").select("fcm_token").eq("id", task["user_id"]).maybe_single().execute()
+        user_result = execute_maybe_single(
+            supabase.table("users").select("fcm_token").eq("id", task["user_id"])
         )
         fcm_token = user_result.data.get("fcm_token") if user_result.data else None
 
         project_name = "Unsorted"
         if task.get("project_id"):
-            project_result = (
-                supabase.table("projects").select("name").eq("id", task["project_id"]).maybe_single().execute()
+            project_result = execute_maybe_single(
+                supabase.table("projects").select("name").eq("id", task["project_id"])
             )
             if project_result.data:
                 project_name = project_result.data["name"]

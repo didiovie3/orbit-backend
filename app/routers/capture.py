@@ -5,6 +5,7 @@ from app.core.auth import CurrentUser, get_current_user
 from app.db.supabase_client import get_supabase
 from app.models.capture import CaptureImageResponse, CaptureVoiceResponse, ConfirmCaptureRequest
 from app.models.task import TaskResponse
+from app.services.audiences import is_owned_audience
 from app.services.gemini_service import extract_hierarchy_from_audio, extract_hierarchy_from_image
 from app.services.task_creation import save_hierarchy_as_tasks
 
@@ -133,6 +134,9 @@ def confirm_capture(
         source = "image"
     else:
         source = "typed"  # e.g. confirming tasks extracted from a note's text
+
+    if body.audience_id and not is_owned_audience(supabase, str(body.audience_id), current_user.user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audience not found")
 
     created = save_hierarchy_as_tasks(
         supabase=supabase,

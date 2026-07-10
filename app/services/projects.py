@@ -1,5 +1,7 @@
 from supabase import Client
 
+from app.db.supabase_client import execute_maybe_single
+
 UNSORTED_COLOR = "#8B8FA8"
 
 
@@ -11,13 +13,11 @@ def get_unsorted_project_id(supabase: Client, user_id: str) -> str:
     position, filter chips, calendar_sync's moved-to-unsorted writes) with
     no special-casing needed. The insert-if-missing fallback below only
     matters for accounts that predate that trigger."""
-    result = (
+    result = execute_maybe_single(
         supabase.table("projects")
         .select("id")
         .eq("owner_id", user_id)
         .eq("is_unsorted", True)
-        .maybe_single()
-        .execute()
     )
     if result.data:
         return result.data["id"]

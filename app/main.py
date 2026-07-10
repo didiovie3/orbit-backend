@@ -10,6 +10,7 @@ from app.core.config import check_required_settings, get_settings
 from app.core.scheduler import start_scheduler, stop_scheduler
 from app.routers import (
     audiences,
+    auth,
     briefs,
     calendar,
     capture,
@@ -78,6 +79,7 @@ app.add_middleware(
 # As you build out Step 5, each new router (tasks, projects, notes, ...)
 # gets its own file in app/routers/ and gets included here the same way.
 app.include_router(health.router, prefix="/v1")
+app.include_router(auth.router, prefix="/v1")
 app.include_router(tasks.router, prefix="/v1")
 app.include_router(projects.router, prefix="/v1")
 app.include_router(notes.router, prefix="/v1")
@@ -138,3 +140,12 @@ if settings.env == "dev":
         from app.services.reminders import run_fire_reminders_job
 
         return run_fire_reminders_job(get_supabase())
+
+    @app.post("/debug/renew-webhooks")
+    def debug_renew_webhooks(current_user: CurrentUser = Depends(get_current_user)):
+        """Manually triggers the calendar webhook renewal job instead of
+        waiting up to 6 hours for it to fire on its own schedule."""
+        from app.db.supabase_client import get_supabase
+        from app.services.calendar_sync import run_renew_webhooks_job
+
+        return run_renew_webhooks_job(get_supabase())

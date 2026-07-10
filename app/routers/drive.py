@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
-from app.db.supabase_client import get_supabase
+from app.db.supabase_client import execute_maybe_single, get_supabase
 from app.models.drive import ConnectDriveRequest, ConnectDriveResponse
 from app.services.calendar_service import exchange_auth_code, revoke_token
 from app.services.drive_service import find_or_create_orbit_folder
@@ -49,8 +49,8 @@ def disconnect_drive(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
-    user_result = (
-        supabase.table("users").select("google_drive_token").eq("id", current_user.user_id).maybe_single().execute()
+    user_result = execute_maybe_single(
+        supabase.table("users").select("google_drive_token").eq("id", current_user.user_id)
     )
     stored = user_result.data.get("google_drive_token") if user_result.data else None
     if stored:

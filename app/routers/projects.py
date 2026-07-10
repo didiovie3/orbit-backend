@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
 from app.core.auth import CurrentUser, get_current_user
-from app.db.supabase_client import get_supabase
+from app.db.supabase_client import execute_maybe_single, get_supabase
 from app.models.common import DeleteConfirm
 from app.models.project import (
     ProjectCreate,
+    ProjectFilesListResponse,
     ProjectListResponse,
     ProjectResponse,
     ProjectUpdate,
@@ -20,13 +21,11 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 def _get_owned_project(supabase: Client, project_id: UUID, user_id: str) -> dict:
     """Same ownership-check pattern as tasks.py — required since the
     service-role client bypasses Row Level Security."""
-    result = (
+    result = execute_maybe_single(
         supabase.table("projects")
         .select("*")
         .eq("id", str(project_id))
         .eq("owner_id", user_id)
-        .maybe_single()
-        .execute()
     )
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
@@ -59,9 +58,9 @@ def create_project(
         "map_x": body.map_x,
         "map_y": body.map_y,
         "is_unsorted": False,  # only the signup trigger creates the real Unsorted project
-        # drive_folder_id stays null here — Drive integration (creating the
-        # matching subfolder) isn't built yet. That's a separate future
-        # endpoint, not part of Project CRUD itself.
+        # drive_folder_id stays null here — created lazily (and cached) the
+        # first time this project actually writes something to Drive, via
+        # get_or_create_project_drive_folder, not eagerly at creation time.
     }
     result = supabase.table("projects").insert(row).execute()
     return result.data[0]
@@ -175,3 +174,70 @@ def delete_project(
         "owner_id", current_user.user_id
     ).execute()
     return None
+
+
+@router.get("/{project_id}/files", response_model=ProjectFilesListResponse)
+def get_project_files(
+    project_id: UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    """
+    Every real Drive-backed file belonging to this project: task
+    attachments plus notes, whichever actually synced (drive_file_id set —
+    excludes anything created while Drive was disconnected, since there's
+    nothing in Drive to link back to for those). Two queries rather than
+    an embedded join, matching this backend's usual style elsewhere.
+    """
+    _get_owned_project(supabase, project_id, current_user.user_id)
+
+    task_ids_result = (
+        supabase.table("tasks")
+        .select("id")
+        .eq("project_id", str(project_id))
+        .eq("user_id", current_user.user_id)
+        .execute()
+    )
+    task_ids = [t["id"] for t in task_ids_result.data]
+
+    attachments: list[dict] = []
+    if task_ids:
+        attachments_result = (
+            supabase.table("task_attachments")
+            .select("id, file_name, drive_file_id, created_at")
+            .in_("task_id", task_ids)
+            .not_.is_("drive_file_id", "null")
+            .execute()
+        )
+        attachments = [
+            {
+                "id": a["id"],
+                "name": a["file_name"],
+                "drive_file_id": a["drive_file_id"],
+                "created_at": a["created_at"],
+                "source": "attachment",
+            }
+            for a in attachments_result.data
+        ]
+
+    notes_result = (
+        supabase.table("notes")
+        .select("id, title, drive_file_id, created_at")
+        .eq("project_id", str(project_id))
+        .eq("user_id", current_user.user_id)
+        .not_.is_("drive_file_id", "null")
+        .execute()
+    )
+    notes = [
+        {
+            "id": n["id"],
+            "name": n["title"] or "Untitled note",
+            "drive_file_id": n["drive_file_id"],
+            "created_at": n["created_at"],
+            "source": "note",
+        }
+        for n in notes_result.data
+    ]
+
+    files = sorted(attachments + notes, key=lambda f: f["created_at"], reverse=True)
+    return {"files": files}

@@ -45,6 +45,18 @@ def run_escalation_job(supabase: Client) -> dict:
     Returns a small summary dict rather than the updated rows — this is
     meant to be called on a timer, not inspected row-by-row each time.
     """
+    # dynamic_escalation_enabled (per-user, Settings) is the global kill
+    # switch; escalation_enabled (per-task) is a finer opt-out on top of
+    # that. Neither alone is enough — a task only escalates when both are
+    # true. Two queries rather than an embedded-resource filter: simplest
+    # thing that works, and cheap at this user count.
+    enabled_users = (
+        supabase.table("users").select("id").eq("dynamic_escalation_enabled", True).execute()
+    )
+    enabled_user_ids = [u["id"] for u in enabled_users.data]
+    if not enabled_user_ids:
+        return {"checked": 0, "updated": 0}
+
     result = (
         supabase.table("tasks")
         .select("id, base_urgency, urgency, due_at")
@@ -52,6 +64,7 @@ def run_escalation_job(supabase: Client) -> dict:
         .is_("archived_at", "null")
         .eq("escalation_enabled", True)
         .not_.is_("due_at", "null")
+        .in_("user_id", enabled_user_ids)
         .execute()
     )
 
