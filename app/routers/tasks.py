@@ -46,6 +46,60 @@ def _get_owned_task(supabase: Client, task_id: UUID, user_id: str) -> dict:
     return result.data
 
 
+def _recompute_progress_from_subtasks(supabase: Client, parent_task_id: str, user_id: str) -> None:
+    """
+    Keeps a parent task's progress derived from its direct sub-tasks,
+    automatically: all of them done -> parent done (and status done, the
+    same pairing the Update Progress sheet itself uses for that one option);
+    any of them started (not not_started) -> parent in_progress; otherwise
+    -> not_started. Called after every sub-task create/update/delete/
+    (un)archive that could change the picture.
+
+    Walks up the parent chain — updating a parent here can itself change
+    what ITS OWN parent should show, so a grandparent stays in sync too
+    when a great-grandchild's progress changes.
+
+    No-ops for a parent with no (non-archived) sub-tasks left, or one this
+    user doesn't own (deleted/foreign — nothing to recompute against).
+    """
+    siblings = (
+        supabase.table("tasks")
+        .select("progress")
+        .eq("parent_task_id", parent_task_id)
+        .eq("user_id", user_id)
+        .is_("archived_at", "null")
+        .execute()
+    )
+    subtask_progresses = [row["progress"] for row in siblings.data]
+    if not subtask_progresses:
+        return
+
+    if all(p == "done" for p in subtask_progresses):
+        new_progress = "done"
+    elif any(p != "not_started" for p in subtask_progresses):
+        new_progress = "in_progress"
+    else:
+        new_progress = "not_started"
+
+    parent = execute_maybe_single(
+        supabase.table("tasks")
+        .select("id, progress, parent_task_id")
+        .eq("id", parent_task_id)
+        .eq("user_id", user_id)
+    )
+    if not parent.data or parent.data["progress"] == new_progress:
+        return
+
+    update_fields: dict = {"progress": new_progress}
+    if new_progress == "done":
+        update_fields["status"] = "done"
+    supabase.table("tasks").update(update_fields).eq("id", parent_task_id).eq("user_id", user_id).execute()
+
+    grandparent_id = parent.data.get("parent_task_id")
+    if grandparent_id:
+        _recompute_progress_from_subtasks(supabase, grandparent_id, user_id)
+
+
 @router.get("", response_model=TaskListResponse)
 def list_tasks(
     project_id: UUID | None = Query(default=None),
@@ -141,6 +195,12 @@ def create_task(
             {"task_id": task["id"], "remind_at": (due - timedelta(minutes=30)).isoformat()},
         ]
         supabase.table("task_reminder_preferences").insert(reminder_rows).execute()
+
+    if body.parent_task_id:
+        # A fresh sub-task always starts not_started — if the parent was
+        # sitting at done (every other sub-task already finished), this new
+        # one means there's pending work again.
+        _recompute_progress_from_subtasks(supabase, str(body.parent_task_id), current_user.user_id)
 
     return task
 
@@ -332,7 +392,12 @@ def update_task(
         .eq("user_id", current_user.user_id)
         .execute()
     )
-    return result.data[0]
+    updated = result.data[0]
+
+    if "progress" in updates and updated.get("parent_task_id"):
+        _recompute_progress_from_subtasks(supabase, updated["parent_task_id"], current_user.user_id)
+
+    return updated
 
 
 @router.patch("/{task_id}/subtasks/reorder", status_code=status.HTTP_204_NO_CONTENT)
@@ -376,7 +441,7 @@ def archive_task(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
-    _get_owned_task(supabase, task_id, current_user.user_id)
+    task = _get_owned_task(supabase, task_id, current_user.user_id)
     now = datetime.now(timezone.utc).isoformat()
     result = (
         supabase.table("tasks")
@@ -385,6 +450,11 @@ def archive_task(
         .eq("user_id", current_user.user_id)
         .execute()
     )
+    if task.get("parent_task_id"):
+        # An archived sub-task no longer counts toward its parent's derived
+        # progress (see _recompute_progress_from_subtasks) — archiving the
+        # last un-done one, for instance, should still flip the parent done.
+        _recompute_progress_from_subtasks(supabase, task["parent_task_id"], current_user.user_id)
     return result.data[0]
 
 
@@ -394,7 +464,7 @@ def unarchive_task(
     current_user: CurrentUser = Depends(get_current_user),
     supabase: Client = Depends(get_supabase),
 ):
-    _get_owned_task(supabase, task_id, current_user.user_id)
+    task = _get_owned_task(supabase, task_id, current_user.user_id)
     result = (
         supabase.table("tasks")
         .update({"archived_at": None})
@@ -402,6 +472,8 @@ def unarchive_task(
         .eq("user_id", current_user.user_id)
         .execute()
     )
+    if task.get("parent_task_id"):
+        _recompute_progress_from_subtasks(supabase, task["parent_task_id"], current_user.user_id)
     return result.data[0]
 
 
@@ -417,8 +489,10 @@ def delete_task(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="confirmed must be true to permanently delete a task",
         )
-    _get_owned_task(supabase, task_id, current_user.user_id)
+    task = _get_owned_task(supabase, task_id, current_user.user_id)
     supabase.table("tasks").delete().eq("id", str(task_id)).eq(
         "user_id", current_user.user_id
     ).execute()
+    if task.get("parent_task_id"):
+        _recompute_progress_from_subtasks(supabase, task["parent_task_id"], current_user.user_id)
     return None

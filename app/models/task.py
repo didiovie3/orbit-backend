@@ -6,11 +6,18 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.models.common import DeleteConfirm  # noqa: F401 — re-exported so existing `from app.models.task import DeleteConfirm` still works
 
-# These four status/source value sets are used in multiple places below —
-# defined once here so they can't drift out of sync with each other or
-# with the database's own CHECK constraints.
+# These value sets are used in multiple places below — defined once here so
+# they can't drift out of sync with each other or with the database's own
+# CHECK constraints.
 TASK_STATUSES = ("overdue", "today", "later", "done")
 TASK_SOURCES = ("typed", "voice", "image")
+# Manually-set progress, distinct from status: status is derived from due_at
+# (deriveStatusFromDueAt on the client) and only "done" is meaningful there.
+# progress is the "not started / in progress / almost done / done" the
+# Update Progress sheet actually offers — matches PROGRESS_OPTIONS in
+# ReminderInteractionSheets.kt on the client, and the tasks.progress CHECK
+# constraint in the database.
+TASK_PROGRESS_VALUES = ("not_started", "in_progress", "almost_done", "done")
 
 
 class TaskCreate(BaseModel):
@@ -50,12 +57,20 @@ class TaskUpdate(BaseModel):
     status: Optional[str] = None
     due_at: Optional[datetime] = None
     location: Optional[str] = None
+    progress: Optional[str] = None
 
     @field_validator("status")
     @classmethod
     def status_must_be_known(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in TASK_STATUSES:
             raise ValueError(f"status must be one of {TASK_STATUSES}")
+        return v
+
+    @field_validator("progress")
+    @classmethod
+    def progress_must_be_known(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in TASK_PROGRESS_VALUES:
+            raise ValueError(f"progress must be one of {TASK_PROGRESS_VALUES}")
         return v
 
 
@@ -73,6 +88,7 @@ class TaskResponse(BaseModel):
     urgency: int
     escalation_enabled: bool
     status: str
+    progress: str
     source: str
     due_at: Optional[datetime] = None
     calendar_event_id: Optional[str] = None

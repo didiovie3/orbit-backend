@@ -27,7 +27,13 @@ def exchange_auth_code(auth_code: str) -> dict:
             "code": auth_code,
             "client_id": settings.google_client_id,
             "client_secret": settings.google_client_secret,
-            "redirect_uri": settings.google_redirect_uri,
+            # No redirect_uri: auth_code comes from Android's native
+            # Identity.getAuthorizationClient().authorize(requestOfflineAccess)
+            # flow (SettingsScreen.kt), not a redirect-based web flow — Google's
+            # token endpoint rejects this exchange if one is sent (it won't
+            # match anything registered for that grant). GOOGLE_REDIRECT_URI in
+            # .env is for the unrelated Supabase Auth Google sign-in callback;
+            # sending it here was causing every connect to fail upstream.
             "grant_type": "authorization_code",
         },
     )
