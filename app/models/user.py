@@ -25,6 +25,14 @@ class UserResponse(BaseModel):
     current_streak: int
     streak_active_today: bool
     onboarding_completed: bool
+    # Server-side, per-account — same reasoning as onboarding_completed
+    # (see its own comment on UserUpdate below): the coach-mark tour's
+    # eligibility/completion used to live only in device-local
+    # SharedPreferences, which caused a real bug — a device that had
+    # already seen the tour on one account silently skipped it for a
+    # different, newly-onboarded account signed in later on that same
+    # device.
+    tour_completed: bool
     created_at: str
 
 
@@ -44,3 +52,6 @@ class UserUpdate(BaseModel):
     # survives reinstalls and multi-device logins instead of living only in
     # SharedPreferences.
     onboarding_completed: Optional[bool] = None
+    # Set once, when the coach-mark tour is skipped or finished
+    # (CoachMarkTour.kt) — same server-side rationale as onboarding_completed.
+    tour_completed: Optional[bool] = None
